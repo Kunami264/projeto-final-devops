@@ -1,0 +1,89 @@
+environment: staging
+
+image:
+  registry: ghcr.io
+  repository: kunami264/projeto-final-devops
+  tag: stg
+  pullSecretName: ghcr-secret
+
+serviceUsers:
+  replicas: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+
+serviceOrders:
+  replicas: 1
+  autoscaling:
+    enabled: false
+    minReplicas: 1
+    maxReplicas: 3
+    targetCPUUtilizationPercentage: 70
+    targetMemoryUtilizationPercentage: 80
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+  service:
+    type: ClusterIP
+    nodePort: null
+  retries: 2
+  timeoutSeconds: 5
+
+ingress:
+  enabled: false
+  className: nginx
+  host: ""
+  annotations: {}
+  tls:
+    enabled: true
+    secretName: projeto-final-tls
+    certManager:
+      enabled: false
+      clusterIssuer: ""
+
+postgres:
+  storage: 1Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  credentials:
+    user: orders
+    database: orders
+    password: "troque-esta-password"
+
+observability:
+  enableTracing: true
+  enableMetrics: true
+
+oidc:
+  issuer: "http://keycloak.auth.svc.cluster.local:8080/realms/projeto-final"
+  clientId: "service-orders-staging"
+  clientSecret: ""
+  requireClientSecret: false
+  allowedClientsForUsers: "service-orders-staging,api-cli"
+  allowedClientsForOrders: "api-cli"
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1
+
+networkPolicy:
+  enabled: true

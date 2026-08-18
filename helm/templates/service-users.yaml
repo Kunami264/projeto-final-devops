@@ -1,0 +1,81 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-users
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: service-users
+    {{- include "projeto-final.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.serviceUsers.autoscaling.enabled }}
+  replicas: {{ .Values.serviceUsers.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app: service-users
+  template:
+    metadata:
+      labels:
+        app: service-users
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8002"
+        prometheus.io/path: "/metrics"
+    spec:
+      imagePullSecrets:
+        - name: {{ .Values.image.pullSecretName }}
+      containers:
+        - name: service-users
+          image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}/service-users:{{ .Values.image.tag }}"
+          ports:
+            - containerPort: 8002
+          envFrom:
+            - configMapRef:
+                name: app-config
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: OIDC_ALLOWED_CLIENTS
+              value: {{ .Values.oidc.allowedClientsForUsers | quote }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8002
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.serviceUsers.resources | nindent 12 }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-users
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "projeto-final.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: service-users
+  ports:
+    - port: 8002
+      targetPort: 8002
+  type: ClusterIP

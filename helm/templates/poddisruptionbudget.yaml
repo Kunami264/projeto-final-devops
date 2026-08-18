@@ -1,0 +1,27 @@
+{{- if .Values.podDisruptionBudget.enabled }}
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: service-orders-pdb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "projeto-final.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app: service-orders
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: service-users-pdb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "projeto-final.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
+  selector:
+    matchLabels:
+      app: service-users
+{{- end }}

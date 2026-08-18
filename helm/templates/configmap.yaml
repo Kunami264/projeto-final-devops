@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "projeto-final.labels" . | nindent 4 }}
+data:
+  OTEL_EXPORTER_OTLP_ENDPOINT: "jaeger.observability.svc.cluster.local:4317"
+  ENABLE_TRACING: {{ .Values.observability.enableTracing | quote }}
+  USERS_SERVICE_URL: "http://{{ include "projeto-final.serviceFQDN" (dict "name" "service-users" "context" $) }}:8002"
+  USERS_SERVICE_TIMEOUT: {{ .Values.serviceOrders.timeoutSeconds | quote }}
+  USERS_SERVICE_RETRIES: {{ .Values.serviceOrders.retries | quote }}
+  OIDC_ISSUER: {{ .Values.oidc.issuer | quote }}
+  OIDC_CLIENT_ID: {{ .Values.oidc.clientId | quote }}

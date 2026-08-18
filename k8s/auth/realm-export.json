@@ -1,0 +1,174 @@
+{
+  "realm": "projeto-final",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "accessTokenLifespan": 300,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "clientScopes": [
+    {
+      "name": "basic",
+      "description": "Claims essenciais (sub, auth_time) — sem isto o access_token fica sem 'sub'. Definido à mão porque listar 'clientScopes' aqui substitui os nativos do realm.",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "false",
+        "display.on.consent.screen": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "sub",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-sub-mapper",
+          "consentRequired": false,
+          "config": {
+            "introspection.token.claim": "true",
+            "access.token.claim": "true"
+          }
+        },
+        {
+          "name": "auth_time",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usersessionmodel-note-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.session.note": "AUTH_TIME",
+            "id.token.claim": "true",
+            "introspection.token.claim": "true",
+            "access.token.claim": "true",
+            "claim.name": "auth_time",
+            "jsonType.label": "long"
+          }
+        }
+      ]
+    },
+    {
+      "name": "users:read",
+      "description": "Leitura de dados de utilizadores (service-users).",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      }
+    },
+    {
+      "name": "orders:read",
+      "description": "Leitura de encomendas (service-orders).",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      }
+    },
+    {
+      "name": "orders:write",
+      "description": "Criação de encomendas (service-orders).",
+      "protocol": "openid-connect",
+      "attributes": {
+        "include.in.token.scope": "true",
+        "display.on.consent.screen": "false"
+      }
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "service-orders-local",
+      "name": "service-orders (M2M) — ambiente local/docker-compose",
+      "description": "Usado pelo service-orders quando corre via docker-compose/make run-local. Segredo distinto de staging/produção.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "troque-este-segredo-service-orders-local",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "defaultClientScopes": [
+        "basic",
+        "users:read"
+      ],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "service-orders-staging",
+      "name": "service-orders (M2M) — staging",
+      "description": "Usado pelo service-orders em staging. Segredo distinto de local/produção — ver helm/values.yaml.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "troque-este-segredo-service-orders-staging",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "defaultClientScopes": [
+        "basic",
+        "users:read"
+      ],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "service-orders-production",
+      "name": "service-orders (M2M) — produção",
+      "description": "Usado pelo service-orders em produção. Segredo distinto de local/staging — ver helm/values-production.yaml.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "troque-este-segredo-service-orders-production",
+      "serviceAccountsEnabled": true,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "authorizationServicesEnabled": false,
+      "defaultClientScopes": [
+        "basic",
+        "users:read"
+      ],
+      "optionalClientScopes": []
+    },
+    {
+      "clientId": "api-cli",
+      "name": "Cliente de demonstração / testes manuais",
+      "description": "Resource Owner Password Credentials — só para gerar tokens de teste com scripts/get_token.py. Grant legacy no Keycloak. Partilhado entre ambientes de propósito.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "troque-este-segredo-api-cli",
+      "serviceAccountsEnabled": false,
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "authorizationServicesEnabled": false,
+      "defaultClientScopes": [
+        "basic",
+        "orders:read",
+        "orders:write",
+        "users:read"
+      ],
+      "optionalClientScopes": []
+    }
+  ],
+  "users": [
+    {
+      "username": "daniel",
+      "enabled": true,
+      "email": "daniel@example.com",
+      "emailVerified": true,
+      "firstName": "Daniel",
+      "lastName": "Utilizador Demo",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "MudaEstaPassword123!",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,49 @@
+{{- range $service := list (dict "name" "service-users" "values" .Values.serviceUsers) (dict "name" "service-orders" "values" .Values.serviceOrders) }}
+{{- $autoscaling := $service.values.autoscaling }}
+{{- if $autoscaling.enabled }}
+{{- if gt (int $autoscaling.minReplicas) (int $autoscaling.maxReplicas) }}
+{{- fail (printf "%s.autoscaling.minReplicas não pode ser superior a maxReplicas" $service.name) }}
+{{- end }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ $service.name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "projeto-final.labels" $ | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ $service.name }}
+  minReplicas: {{ $autoscaling.minReplicas }}
+  maxReplicas: {{ $autoscaling.maxReplicas }}
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Percent
+          value: 25
+          periodSeconds: 60
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $autoscaling.targetCPUUtilizationPercentage }}
+    - type: Resource
+      resource:
+        name: memory
+        target:
+          type: Utilization
+          averageUtilization: {{ $autoscaling.targetMemoryUtilizationPercentage }}
+{{- end }}
+{{- end }}

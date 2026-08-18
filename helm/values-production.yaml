@@ -1,0 +1,42 @@
+environment: production
+
+image:
+  tag: main
+
+serviceUsers:
+  replicas: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 6
+
+serviceOrders:
+  replicas: 2
+  autoscaling:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 8
+  service:
+    type: NodePort
+    nodePort: 30001
+
+oidc:
+  issuer: "http://keycloak.auth.svc.cluster.local:8080/realms/projeto-final"
+  clientId: "service-orders-production"
+  allowedClientsForUsers: "service-orders-production"
+
+postgres:
+  storage: 5Gi
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 1000m
+      memory: 1Gi
+  credentials:
+    password: "producao-troque-esta-password"
+
+podDisruptionBudget:
+  enabled: true
+  minAvailable: 1

@@ -1,0 +1,105 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: service-orders
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: service-orders
+    {{- include "projeto-final.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.serviceOrders.autoscaling.enabled }}
+  replicas: {{ .Values.serviceOrders.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      app: service-orders
+  template:
+    metadata:
+      labels:
+        app: service-orders
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8001"
+        prometheus.io/path: "/metrics"
+    spec:
+      imagePullSecrets:
+        - name: {{ .Values.image.pullSecretName }}
+      initContainers:
+        - name: wait-for-postgres
+          image: busybox:1.36
+          command:
+            - sh
+            - -c
+            - "until nc -z postgres-orders 5432; do echo aguardar postgres-orders; sleep 2; done"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65534
+            capabilities:
+              drop: ["ALL"]
+      containers:
+        - name: service-orders
+          image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}/service-orders:{{ .Values.image.tag }}"
+          ports:
+            - containerPort: 8001
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: postgres-orders-credentials
+            - secretRef:
+                name: api-auth-secret
+          env:
+            - name: PYTHONDONTWRITEBYTECODE
+              value: "1"
+            - name: OIDC_ALLOWED_CLIENTS
+              value: {{ .Values.oidc.allowedClientsForOrders | quote }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.serviceOrders.resources | nindent 12 }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: service-orders
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "projeto-final.labels" . | nindent 4 }}
+spec:
+  selector:
+    app: service-orders
+  ports:
+    - port: 8001
+      targetPort: 8001
+      {{- if and (not .Values.ingress.enabled) (eq .Values.serviceOrders.service.type "NodePort") }}
+      nodePort: {{ .Values.serviceOrders.service.nodePort }}
+      {{- end }}
+  {{- if .Values.ingress.enabled }}
+  type: ClusterIP
+  {{- else }}
+  type: {{ .Values.serviceOrders.service.type }}
+  {{- end }}

@@ -1,0 +1,157 @@
+version: "3.9"
+
+services:
+  postgres-orders:
+    image: postgres:16-alpine
+    container_name: postgres-orders
+    environment:
+      - POSTGRES_USER=orders
+      - POSTGRES_PASSWORD=orders_dev_password
+      - POSTGRES_DB=orders
+    volumes:
+      - postgres-orders-data:/var/lib/postgresql/data
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U orders -d orders"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0
+    container_name: keycloak
+    command: ["start-dev", "--import-realm"]
+    environment:
+      - KEYCLOAK_ADMIN=admin
+      - KEYCLOAK_ADMIN_PASSWORD=admin
+      - KC_HOSTNAME=http://keycloak:8080
+      - KC_HTTP_ENABLED=true
+      - KC_HOSTNAME_STRICT=false
+      - KC_HEALTH_ENABLED=true
+    ports:
+      - "8080:8080"
+      - "9000:9000"
+    volumes:
+      - ./k8s/auth/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
+      - keycloak-data:/opt/keycloak/data
+    networks:
+      - app-network
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - >
+          exec 3<>/dev/tcp/127.0.0.1/9000 &&
+          echo -e "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 &&
+          cat <&3 | grep -m 1 "HTTP/1.1 200"
+      interval: 10s
+      timeout: 5s
+      retries: 15
+      start_period: 30s
+
+  service-users:
+    build: ./service-users
+    container_name: service-users
+    ports:
+      - "8002:8002"
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - ENABLE_TRACING=true
+      - OIDC_ISSUER=http://keycloak:8080/realms/projeto-final
+      - OIDC_ALLOWED_CLIENTS=service-orders-local,api-cli
+    networks:
+      - app-network
+    depends_on:
+      jaeger:
+        condition: service_started
+      keycloak:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  service-orders:
+    build: ./service-orders
+    container_name: service-orders
+    ports:
+      - "8001:8001"
+    environment:
+      - OTEL_EXPORTER_OTLP_ENDPOINT=jaeger:4317
+      - ENABLE_TRACING=true
+      - USERS_SERVICE_URL=http://service-users:8002
+      - DATABASE_URL=postgresql+psycopg2://orders:orders_dev_password@postgres-orders:5432/orders
+      - OIDC_ISSUER=http://keycloak:8080/realms/projeto-final
+      - OIDC_CLIENT_ID=service-orders-local
+      - OIDC_CLIENT_SECRET=troque-este-segredo-service-orders-local
+      - OIDC_ALLOWED_CLIENTS=api-cli
+    networks:
+      - app-network
+    depends_on:
+      service-users:
+        condition: service_healthy
+      postgres-orders:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      jaeger:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    container_name: jaeger
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+    networks:
+      - app-network
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./k8s/observability/prometheus-local.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    networks:
+      - app-network
+    depends_on:
+      - service-users
+      - service-orders
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin_dev_password
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./k8s/observability/grafana-provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./k8s/observability/grafana-provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./k8s/observability/grafana-provisioning/dashboard-files:/var/lib/grafana/dashboards:ro
+      - ./k8s/observability/grafana-provisioning/alerting:/etc/grafana/provisioning/alerting:ro
+    networks:
+      - app-network
+    depends_on:
+      - prometheus
+
+networks:
+  app-network:
+    driver: bridge
+
+volumes:
+  postgres-orders-data:
+  keycloak-data:
+  prometheus-data:
+  grafana-data:

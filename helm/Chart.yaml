@@ -1,0 +1,21 @@
+apiVersion: v2
+name: projeto-final
+description: >-
+  Plataforma de microsserviços service-users / service-orders, com
+  PostgreSQL para service-orders, autenticação/autorização Bearer JWT
+  (RS256) validada contra um Authorization Server real (Keycloak),
+  observabilidade completa (Jaeger para tracing, Prometheus com
+  persistência para métricas, Grafana com dashboards provisionados,
+  logs JSON correlacionados por trace_id) e um único chart parametrizado
+  por ambiente (values-staging.yaml / values-production.yaml).
+type: application
+version: 1.5.0
+appVersion: "1.3.0"
+keywords:
+  - fastapi
+  - microservices
+  - devops
+  - observability
+  - oidc
+maintainers:
+  - name: Daniel

@@ -1,0 +1,117 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: projeto-final-alerts
+    folder: "Projeto Final"
+    interval: 1m
+    rules:
+      - uid: high-error-rate-5xx
+        title: "Taxa de erro 5xx elevada"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: >-
+                sum(rate(http_requests_total{status="5xx"}[5m])) by (service)
+                /
+                sum(rate(http_requests_total[5m])) by (service)
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.05]
+              refId: C
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mais de 5% dos pedidos a {{ $labels.service }} estão a falhar com 5xx (últimos 5min)."
+
+      - uid: slow-requests-ratio
+        title: "Latência elevada (pedidos acima de 1s)"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: >-
+                1 - (
+                  sum(rate(http_request_duration_seconds_bucket{le="1.0"}[5m])) by (service)
+                  /
+                  sum(rate(http_request_duration_seconds_count[5m])) by (service)
+                )
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0.05]
+              refId: C
+        noDataState: NoData
+        execErrState: Error
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Mais de 5% dos pedidos a {{ $labels.service }} demoram mais de 1s (últimos 5min)."
+
+      - uid: service-down
+        title: "Serviço não responde ao scrape do Prometheus"
+        condition: C
+        data:
+          - refId: A
+            relativeTimeRange:
+              from: 120
+              to: 0
+            datasourceUid: prometheus
+            model:
+              editorMode: code
+              expr: 'up{service=~"service-users|service-orders"}'
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              type: threshold
+              expression: A
+              conditions:
+                - evaluator:
+                    type: lt
+                    params: [1]
+              refId: C
+        noDataState: Alerting
+        execErrState: Error
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.service }} não responde ao scrape do Prometheus há pelo menos 2 minutos."

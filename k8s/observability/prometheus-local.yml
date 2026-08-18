@@ -1,0 +1,18 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: service-users
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["service-users:8002"]
+        labels:
+          service: service-users
+
+  - job_name: service-orders
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["service-orders:8001"]
+        labels:
+          service: service-orders

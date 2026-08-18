@@ -1,0 +1,8 @@
+environment: staging
+
+image:
+  tag: stg
+
+postgres:
+  credentials:
+    password: "staging-troque-esta-password"
