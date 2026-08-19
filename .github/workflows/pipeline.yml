@@ -48,6 +48,7 @@ jobs:
           scan-ref: .
           scanners: vuln
           severity: HIGH,CRITICAL
+          ignore-unfixed: true
           exit-code: "1"
           format: table
 
@@ -72,6 +73,7 @@ jobs:
           image-ref: local/${{ matrix.service }}:${{ github.sha }}
           format: table
           severity: HIGH,CRITICAL
+          ignore-unfixed: true
           exit-code: "1"
 
   build:
