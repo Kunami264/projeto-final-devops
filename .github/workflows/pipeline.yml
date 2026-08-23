@@ -229,7 +229,7 @@ jobs:
           curl -sf http://localhost:8001/health
 
   deploy-stg:
-    name: Deploy STG (Helm)
+    name: Deploy STG 
     needs: test-integration
     if: github.ref == 'refs/heads/stg' && github.event_name == 'push'
     runs-on: self-hosted
@@ -242,7 +242,7 @@ jobs:
       - name: Checkout do repositório
         uses: actions/checkout@v5
 
-      - name: Deploy no Kubernetes via Helm (namespace staging)
+      - name: Deploy no Kubernetes via Helm
         run: |
           set -euo pipefail
           umask 077
