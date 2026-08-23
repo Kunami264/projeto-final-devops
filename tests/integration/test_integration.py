@@ -7,6 +7,7 @@ import pytest
 USERS_URL = os.getenv("USERS_URL", "http://localhost:8002")
 ORDERS_URL = os.getenv("ORDERS_URL", "http://localhost:8001")
 KEYCLOAK_BASE_URL = os.getenv("KEYCLOAK_BASE_URL", "http://localhost:8080")
+KEYCLOAK_MGMT_URL = os.getenv("KEYCLOAK_MGMT_URL", "http://localhost:9000")
 KEYCLOAK_TOKEN_URL = os.getenv(
     "KEYCLOAK_TOKEN_URL",
     f"{KEYCLOAK_BASE_URL}/realms/projeto-final/protocol/openid-connect/token",
@@ -53,7 +54,7 @@ def orders_write_headers():
 
 @pytest.mark.integration
 def test_keycloak_is_healthy():
-    r = httpx.get(f"{KEYCLOAK_BASE_URL}/health/ready", timeout=5)
+    r = httpx.get(f"{KEYCLOAK_MGMT_URL}/health/ready", timeout=5)
     assert r.status_code == 200
 
 

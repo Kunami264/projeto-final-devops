@@ -63,6 +63,7 @@ logs: ## Segue os logs de todos os containers em execução
 
 ps: ## Lista o estado dos containers do projeto
 	$(COMPOSE) ps
+	abort: ## Para e remove os containers, redes e volumes (não apaga as imagens) e sai do Makefile
 
 
 
