@@ -261,7 +261,6 @@ jobs:
             -f ./helm/values-staging.yaml \
             -f secret-values.yaml \
             --set image.tag="${{ github.sha }}" \
-            --atomic \
             --wait --timeout 3m
 
       - name: Remover ficheiros sensíveis do disco do runner
