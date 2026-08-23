@@ -123,6 +123,9 @@ jobs:
   test-unit:
     name: Testes unitários (${{ matrix.service }})
     needs: build
+    if: >-
+      github.ref == 'refs/heads/dev' ||
+      github.base_ref == 'dev'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     strategy:
