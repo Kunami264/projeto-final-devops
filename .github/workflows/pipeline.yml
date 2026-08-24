@@ -261,8 +261,7 @@ jobs:
             -f ./helm/values-staging.yaml \
             -f secret-values.yaml \
             --set image.tag="sha-${{ github.sha }}" \
-            --rollback-on-failure \
-            --wait --timeout 3m
+            --wait --timeout 2m
 
       - name: Remover ficheiros sensíveis do disco do runner
         if: always()
@@ -304,8 +303,7 @@ jobs:
             -f ./helm/values-production.yaml \
             -f secret-values.yaml \
             --set image.tag="sha-${{ github.sha }}" \
-            --rollback-on-failure \
-            --wait --timeout 3m
+            --wait --timeout 2m
 
       - name: Remover ficheiros sensíveis do disco do runner
         if: always()
