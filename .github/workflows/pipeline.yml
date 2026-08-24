@@ -260,7 +260,8 @@ jobs:
             -n staging --create-namespace \
             -f ./helm/values-staging.yaml \
             -f secret-values.yaml \
-            --set image.tag="${{ github.sha }}" \
+            --set image.tag="sha-${{ github.sha }}" \
+            --rollback-on-failure \
             --wait --timeout 3m
 
       - name: Remover ficheiros sensíveis do disco do runner
@@ -302,8 +303,8 @@ jobs:
             -n production --create-namespace \
             -f ./helm/values-production.yaml \
             -f secret-values.yaml \
-            --set image.tag="${{ github.sha }}" \
-            --atomic \
+            --set image.tag="sha-${{ github.sha }}" \
+            --rollback-on-failure \
             --wait --timeout 3m
 
       - name: Remover ficheiros sensíveis do disco do runner
