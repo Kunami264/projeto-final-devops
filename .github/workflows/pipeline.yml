@@ -320,6 +320,7 @@ jobs:
     name: Smoke tests (PRD)
     needs: deploy-prd
     runs-on: self-hosted
+    environment: production
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
