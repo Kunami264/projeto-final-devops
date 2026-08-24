@@ -92,6 +92,9 @@ jobs:
       - name: Checkout do código
         uses: actions/checkout@v5
 
+      - name: Configurar QEMU para imagens ARM64
+        uses: docker/setup-qemu-action@v3
+
       - name: Configurar Docker Buildx
         uses: docker/setup-buildx-action@v4
       - name: Login no GHCR
@@ -114,6 +117,7 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: ./${{ matrix.service }}
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -171,7 +175,7 @@ jobs:
       - name: Subir os dois microsserviços + Jaeger via Docker Compose
         run: docker compose up -d --build
 
-      - name: Esperar que os serviços fiquem saudáveis (máx. 3min — Keycloak demora a arrancar)
+      - name: Esperar que os serviços fiquem saudáveis 
         run: |
           set -euo pipefail
           for i in $(seq 1 180); do
