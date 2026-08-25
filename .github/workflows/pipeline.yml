@@ -319,6 +319,7 @@ jobs:
   smoke-prd:
     name: Smoke tests (PRD)
     needs: deploy-prd
+    environment: production
     runs-on: self-hosted
     timeout-minutes: 10
     steps:
