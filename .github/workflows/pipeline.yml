@@ -288,14 +288,6 @@ jobs:
       - name: Checkout do repositório
         uses: actions/checkout@v5
 
-      - name: Diagnóstico do secret KUBE_CONFIG_PRD
-        env:
-          RAW: ${{ secrets.KUBE_CONFIG_PRD }}
-        run: |
-          echo -n "Comprimento em caracteres: ${#RAW}"
-          echo -n "${RAW}" | md5sum
-          echo -n "${RAW}" | tail -c 20 | xxd
-
       - name: Deploy no Kubernetes via Helm (namespace production)
         run: |
           set -euo pipefail
