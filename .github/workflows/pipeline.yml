@@ -339,13 +339,18 @@ jobs:
           echo "${{ secrets.KUBE_CONFIG_PRD }}" | base64 -d > kubeconfig-prd.yaml
           export KUBECONFIG="$(pwd)/kubeconfig-prd.yaml"
           
-          kubectl port-forward -n production svc/service-users 8002:8000 & 
+          kubectl port-forward -n production svc/service-users 8002:8002 > pf_users.log 2>&1 & 
           echo $! > portforward_users.pid
           
-          kubectl port-forward -n production svc/service-orders 8001:8001 &
+          kubectl port-forward -n production svc/service-orders 8001:8001 > pf_orders.log 2>&1 &
           echo $! > portforward_orders.pid
-          
-          sleep 5
+
+          sleep 10
+
+          echo "=== LOGS DO PORT-FORWARD USERS ==="
+          cat pf_users.log
+          echo "=== LOGS DO PORT-FORWARD ORDERS ==="
+          cat pf_orders.log
 
       - name: Correr smoke tests contra produção
         env:
