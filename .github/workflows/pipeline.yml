@@ -292,10 +292,10 @@ jobs:
         env:
           RAW: ${{ secrets.KUBE_CONFIG_PRD }}
         run: |
-          echo "Comprimento em caracteres: ${#RAW}"
-          echo "${RAW}" | md5sum
-          echo "${RAW}" | tail -c 20 | xxd
-          
+          echo -n "Comprimento em caracteres: ${#RAW}"
+          echo -n "${RAW}" | md5sum
+          echo -n "${RAW}" | tail -c 20 | xxd
+
       - name: Deploy no Kubernetes via Helm (namespace production)
         run: |
           set -euo pipefail
