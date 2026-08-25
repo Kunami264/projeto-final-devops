@@ -334,22 +334,28 @@ jobs:
       - name: Instalar dependências
         run: pip install -r requirements.txt
 
-      - name: Abrir port-forward para service-users (interno)
+      - name: Abrir port-forward para os serviços (interno)
         run: |
           echo "${{ secrets.KUBE_CONFIG_PRD }}" | base64 -d > kubeconfig-prd.yaml
           export KUBECONFIG="$(pwd)/kubeconfig-prd.yaml"
-          kubectl port-forward -n production svc/service-users 8002:8002 &
-          echo $! > portforward.pid
-          sleep 3
+          
+          kubectl port-forward -n production svc/service-users 8002:8000 & 
+          echo $! > portforward_users.pid
+          
+          kubectl port-forward -n production svc/service-orders 8001:8001 &
+          echo $! > portforward_orders.pid
+          
+          sleep 5
 
       - name: Correr smoke tests contra produção
         env:
-          USERS_URL: ${{ secrets.PRD_USERS_URL }}
-          ORDERS_URL: ${{ secrets.PRD_ORDERS_URL }}
+          USERS_URL: http://localhost:8002
+          ORDERS_URL: http://localhost:8001
         run: python -m pytest tests/smoke/ -v
 
       - name: Fechar port-forward e limpar kubeconfig
         if: always()
         run: |
-          kill "$(cat portforward.pid)" 2>/dev/null || true
+          kill "$(cat portforward_users.pid)" 2>/dev/null || true
+          kill "$(cat portforward_orders.pid)" 2>/dev/null || true
           shred -u kubeconfig-prd.yaml 2>/dev/null || rm -f kubeconfig-prd.yaml
