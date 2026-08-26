@@ -11,6 +11,7 @@ ORDERS_URL := http://localhost:8001
 .DEFAULT_GOAL := help
 .PHONY: help venv install \
         test test-unit test-integration test-smoke \
+        validate-dev validate-staging validate-production \
         build up down restart logs ps \
         run-local stop-local \
         lint clean destroy \
@@ -146,3 +147,44 @@ k8s-observability-apply: ## Aplica Jaeger + Prometheus + Grafana (namespace obse
 
 k8s-auth-apply: ## Aplica o Keycloak (namespace auth) — requer kubectl configurado
 	kubectl apply -f k8s/auth/
+
+
+## Validações de cada ambiente
+validate-dev: install
+	@echo "===== [DEV] Testes unitários — service-users ====="
+	cd service-users && ../$(VENV_PY) -m pytest tests/ -v
+	@echo "===== [DEV] Testes unitários — service-orders ====="
+	cd service-orders && ../$(VENV_PY) -m pytest tests/ -v
+	@echo "===== [DEV] OK ====="
+
+
+validate-staging: install
+	@echo "===== [STG] A iniciar ambiente ====="
+	$(COMPOSE) up -d --build
+	@echo "===== [STG] A aguardar serviços ====="
+	@until [ "$$(docker inspect --format='{{.State.Health.Status}}' projetofinal-service-users-1 2>/dev/null)" = "healthy" ]; do \
+	echo "A aguardar service-users..."; \
+	sleep 2; \
+	done
+	@until [ "$$(docker inspect --format='{{.State.Health.Status}}' projetofinal-service-orders-1 2>/dev/null)" = "healthy" ]; do \
+	echo "A aguardar service-orders..."; \
+	sleep 2; \
+	done
+
+	@echo "===== [STG] Serviços prontos ====="
+	@echo "===== [STG] Testes de integração ====="
+	USERS_URL=$(USERS_URL) ORDERS_URL=$(ORDERS_URL) \
+	$(VENV_PY) -m pytest tests/integration/ -v -m integration
+	@echo "===== [STG] OK ====="
+
+
+validate-production: install
+	@echo "===== [PRD] Helm lint ====="
+	helm lint ./helm
+	@echo "===== [PRD] Helm template ====="
+	helm template projeto-final ./helm \
+		-f ./helm/values-production.yaml > /tmp/projeto-final-production.yaml
+	@echo "===== [PRD] Smoke tests ====="
+	USERS_URL="$(USERS_URL)" ORDERS_URL="$(ORDERS_URL)" \
+		$(VENV_PY) -m pytest tests/smoke/ -v
+	@echo "===== [PRD] OK ====="
