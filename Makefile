@@ -1,11 +1,17 @@
 SHELL := /bin/bash
-PYTHON := python3.12
-VENV_DIR := venv
-VENV_PY := $(VENV_DIR)/bin/python
-VENV_PIP := $(VENV_DIR)/bin/pip
-COMPOSE := docker compose
+.SHELLFLAGS := -eu -o pipefail -c
 
-USERS_URL := http://localhost:8002
+PYTHON      := python3.12
+VENV_DIR    := venv
+VENV_PY     := $(VENV_DIR)/bin/python
+VENV_PIP    := $(VENV_DIR)/bin/pip
+STAMP       := $(VENV_DIR)/.installed
+COMPOSE     := docker compose
+KUBECTL     := kubectl
+NAMESPACE   := prd
+
+# URLs locais para testes
+USERS_URL  := http://localhost:8002
 ORDERS_URL := http://localhost:8001
 
 .DEFAULT_GOAL := help
@@ -13,126 +19,183 @@ ORDERS_URL := http://localhost:8001
         test test-unit test-integration test-smoke \
         validate-dev validate-staging validate-production \
         build up down restart logs ps \
+        build up down restart logs ps abort \
         run-local stop-local \
         lint clean destroy \
         helm-lint helm-template-staging helm-template-production \
         helm-install-staging helm-install-production \
-        token k8s-observability-apply token-m2m k8s-auth-apply
+        token k8s-observability-apply token-m2m k8s-auth-apply \
+        validate-dev validate-stg validate-prd validate-all monitor-prd
 
-venv: ## Cria o virtualenv local (venv/)
+help: ## Lista todos os targets disponíveis com a respetiva descrição
+	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
+		sort | \
+		awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-28s\033[0m %s\n", $$1, $$2}'
+
+# ════════════════════════════════════════════════════════════════════
+# INTERFACE OFICIAL — os 3 ambientes + validação agregada.
+# ════════════════════════════════════════════════════════════════════
+
+validate-dev: test-unit ## [DEV] Instala dependências e corre os testes unitários
+	@echo "===== [DEV] ✅ VALIDAÇÃO PASSOU ====="
+
+validate-stg: helm-lint helm-template-staging up wait-healthy test-integration ## [STG] Valida Helm, sobe containers locais e corre testes de integração
+	@echo "===== [STG] ✅ VALIDAÇÃO PASSOU ====="
+
+validate-prd: helm-template-production helm-install-production wait-prd-healthy test-smoke-prd ## [PRD] Deploy Helm e Testes em Produção
+	@echo "===== [PRD] ✅ VALIDAÇÃO PASSOU ====="
+
+validate-all: ## Corre a validação nos 3 ambientes em sequência (dev -> stg -> prd)
+	@echo "========================================"
+	@echo "     VALIDAÇÃO DOS 3 AMBIENTES"
+	@echo "========================================"
+	$(MAKE) validate-dev
+	$(MAKE) validate-stg
+	$(MAKE) validate-prd
+	@echo "========================================"
+	@echo "     ✅ TODAS AS VALIDAÇÕES PASSARAM"
+	@echo "========================================"
+
+# ────────────────────────────────────────────────────────────────────
+# Targets Auxiliares e Testes
+# ────────────────────────────────────────────────────────────────────
+
+venv: 
 	$(PYTHON) -m venv $(VENV_DIR)
 
-install: venv ## Instala as dependências do requirements.txt consolidado
+$(STAMP): requirements.txt | venv 
 	$(VENV_PIP) install --quiet --upgrade pip
 	$(VENV_PIP) install --quiet -r requirements.txt
+	touch $(STAMP)
 
+install: $(STAMP)
 
-test-unit: install ## [DEV] Testes unitários isolados de cada microsserviço
+test-unit: install 
 	@echo ">> Testes unitários — service-users"
 	cd service-users && ../$(VENV_PY) -m pytest tests/ -v
 	@echo ">> Testes unitários — service-orders"
 	cd service-orders && ../$(VENV_PY) -m pytest tests/ -v
 
-test-integration: install ## [STG] Testes de integração contra os containers reais (requer 'make up')
+test-integration: install 
+	@echo ">> A correr testes de integração usando código fonte local..."
 	USERS_URL=$(USERS_URL) ORDERS_URL=$(ORDERS_URL) \
 		$(VENV_PY) -m pytest tests/integration/ -v -m integration
 
-test-smoke: install ## [PRD] Smoke tests pós-deploy (/health de cada serviço)
-	USERS_URL=$(USERS_URL) ORDERS_URL=$(ORDERS_URL) \
-		$(VENV_PY) -m pytest tests/smoke/ -v
+# Novo Teste Smoke Seguro para K8s com port-forward automático
+test-smoke-prd: install
+	@echo "===== [PRD] A iniciar port-forward temporário para testes locais ====="
+	@$(KUBECTL) port-forward svc/service-users 8002:8002 -n $(NAMESPACE) > /dev/null 2>&1 & echo $$! > users_pf.pid
+	@$(KUBECTL) port-forward svc/service-orders 8001:8001 -n $(NAMESPACE) > /dev/null 2>&1 & echo $$! > orders_pf.pid
+	@sleep 3 # Aguarda abertura das portas
+	@echo "===== [PRD] A executar testes locais (Smoke Tests) contra Kubernetes ====="
+	@USERS_URL=$(USERS_URL) ORDERS_URL=$(ORDERS_URL) $(VENV_PY) -m pytest tests/smoke/ -v || (kill `cat users_pf.pid orders_pf.pid 2>/dev/null` && exit 1)
+	@echo "===== [PRD] A terminar port-forward ====="
+	@kill `cat users_pf.pid` `cat orders_pf.pid` 2>/dev/null || true
+	@rm -f users_pf.pid orders_pf.pid
 
-test: test-unit ## Alias de conveniência para test-unit (usado localmente antes de qualquer commit)
+test: test-unit 
 
+# ────────────────────────────────────────────────────────────────────
+# Gestão de Ambientes Locais (STG/DEV)
+# ────────────────────────────────────────────────────────────────────
 
-build: ## Constrói as imagens Docker dos dois microsserviços
+build: 
 	$(COMPOSE) build
 
-up: ## Sobe os dois microsserviços + PostgreSQL (orders) + Jaeger em background
+up: 
 	$(COMPOSE) up -d --build
+	@echo ">> Serviços e Monitorização em STG subiram."
 	@echo "service-users   -> $(USERS_URL)/health"
 	@echo "service-orders  -> $(ORDERS_URL)/health"
-	@echo "postgres-orders -> localhost:5432 (db=orders, user=orders)"
+	@echo "postgres-orders -> localhost:5432"
 	@echo "Jaeger UI       -> http://localhost:16686"
+	@echo "Prometheus      -> http://localhost:9090"
+	@echo "Grafana         -> http://localhost:3000"
 
-down: ## Para e remove os containers, redes e volumes (não apaga as imagens)
+wait-healthy: 
+	@echo ">> A aguardar service-users (Timeout de 60s)..."
+	@timeout 60 bash -c 'until curl -sf $(USERS_URL)/health > /dev/null; do sleep 2; done' || (echo "ERRO: service-users não subiu" && exit 1)
+	@echo ">> A aguardar service-orders (Timeout de 60s)..."
+	@timeout 60 bash -c 'until curl -sf $(ORDERS_URL)/health > /dev/null; do sleep 2; done' || (echo "ERRO: service-orders não subiu" && exit 1)
+	@echo ">> Serviços prontos."
+
+down: 
 	$(COMPOSE) down -v
 
-restart: down up ## Reinicia o ambiente local por completo
-
-logs: ## Segue os logs de todos os containers em execução
+restart: down up 
+logs: 
 	$(COMPOSE) logs -f
-
-ps: ## Lista o estado dos containers do projeto
+ps: 
 	$(COMPOSE) ps
-	abort: ## Para e remove os containers, redes e volumes (não apaga as imagens) e sai do Makefile
+abort: down 
 
+# ────────────────────────────────────────────────────────────────────
+# Gestão do Kubernetes e Deploy (PRD)
+# ────────────────────────────────────────────────────────────────────
 
+helm-lint: 
+	helm lint ./helm
+	helm lint ./helm -f ./helm/values-staging.yaml
+	helm lint ./helm -f ./helm/values-production.yaml
 
-run-local: install ## Arranca os dois serviços localmente via uvicorn (sem Docker para os serviços — Keycloak continua a precisar do docker-compose)
-	# Pré-requisitos:
-	#   1. `docker compose up -d keycloak` (Keycloak fica em localhost:8080)
-	#   2. Uma entrada "127.0.0.1 keycloak" em /etc/hosts — o issuer dos
-	#      tokens está fixado em "keycloak:8080" (KC_HOSTNAME no
-	#      docker-compose.yml), e como estes processos correm fora da
-	#      rede docker, "keycloak" só resolve com essa entrada manual.
-	OIDC_ISSUER=http://keycloak:8080/realms/projeto-final \
-	USERS_SERVICE_URL=$(USERS_URL) \
-		$(VENV_PY) -m uvicorn app.main:app --app-dir service-users --host 0.0.0.0 --port 8002 & \
-	OIDC_ISSUER=http://keycloak:8080/realms/projeto-final \
-	OIDC_CLIENT_ID=service-orders-local \
-	OIDC_CLIENT_SECRET=troque-este-segredo-service-orders-local \
-	USERS_SERVICE_URL=$(USERS_URL) \
-		$(VENV_PY) -m uvicorn app.main:app --app-dir service-orders --host 0.0.0.0 --port 8001 & \
+helm-template-production: 
+	helm template projeto-final ./helm -n $(NAMESPACE) -f ./helm/values-production.yaml
+
+helm-install-production: 
+	@echo "===== [PRD] Criar namespace (idempotente) ====="
+	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
+	@echo "===== [PRD] A instalar/atualizar Helm Chart ====="
+	helm upgrade --install projeto-final ./helm -n $(NAMESPACE) --create-namespace -f ./helm/values-production.yaml
+
+wait-prd-healthy:
+	@echo "===== [PRD] A aguardar Rollout (Timeout automático pelo Helm/K8s) ====="
+	$(KUBECTL) rollout status deployment/postgres-orders -n $(NAMESPACE) --timeout=120s
+	$(KUBECTL) rollout status deployment/service-users -n $(NAMESPACE) --timeout=120s
+	$(KUBECTL) rollout status deployment/service-orders -n $(NAMESPACE) --timeout=120s
+	@echo "===== [PRD] Workloads em execução ====="
+	$(KUBECTL) get pods,svc,hpa -n $(NAMESPACE)
+
+destroy: down clean 
+	@echo ">> Removendo imagens Docker do projeto..."
+	-docker rmi $$(docker images -q "projeto-final-devops*") 2>/dev/null || true
+	@echo ">> Removendo release do Kubernetes PRD..."
+	-helm uninstall projeto-final -n $(NAMESPACE) 2>/dev/null || true
+	@echo ">> Infraestrutura completamente removida. ✅"
+
+# ────────────────────────────────────────────────────────────────────
+# Monitorização (Observability)
+# ────────────────────────────────────────────────────────────────────
+
+k8s-observability-apply: ## Aplica o stack de monitorização no k8s
+	$(KUBECTL) apply -f k8s/observability/
+
+monitor-prd: ## Abre port-forward para aceder à monitorização no K8s
+	@echo ">> A abrir port-forward para monitorização de Produção. Prime Ctrl+C para sair."
+	@echo ">> Jaeger: http://localhost:16686"
+	@echo ">> Prometheus: http://localhost:9090"
+	@echo ">> Grafana: http://localhost:3000 (assumindo que o Grafana existe na porta 3000)"
+	@$(KUBECTL) port-forward -n observability svc/jaeger 16686:16686 & \
+	$(KUBECTL) port-forward -n observability svc/prometheus 9090:9090 & \
+	$(KUBECTL) port-forward -n observability svc/grafana 3000:80 & \
 	wait
 
-stop-local: ## Termina quaisquer processos uvicorn locais lançados por run-local
-	@sudo pkill -f "uvicorn app.main:app" || true
+# ────────────────────────────────────────────────────────────────────
+# Ferramentas Python, Limpeza e Auth
+# ────────────────────────────────────────────────────────────────────
 
+clean: 
+	rm -rf $(VENV_DIR) users_pf.pid orders_pf.pid
+	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
 
-
-lint: install ## Verifica sintaxe/compilação dos módulos Python (checagem rápida)
+lint: install 
 	$(VENV_PY) -m py_compile service-users/app/main.py service-users/app/security.py \
 		service-users/app/logging_setup.py \
 		service-orders/app/main.py service-orders/app/db.py service-orders/app/models.py \
 		service-orders/app/security.py service-orders/app/logging_setup.py service-orders/app/oidc_client.py \
 		scripts/get_token.py
 
-clean: ## Remove caches Python e o virtualenv local
-	rm -rf $(VENV_DIR)
-	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
-
-destroy: down clean ## Limpeza total: containers, imagens, venv, caches
-	@echo ">> Removendo imagens Docker do projeto..."
-	-docker rmi $$(docker images -q "projeto-final-devops*") 2>/dev/null
-	-docker stop jaeger 2>/dev/null
-	-docker rm jaeger 2>/dev/null
-	@echo ">> Infraestrutura completamente removida."
-
-
-
-helm-lint: ## Valida a sintaxe e as boas práticas do chart
-	helm lint ./helm
-	helm lint ./helm -f ./helm/values-staging.yaml
-	helm lint ./helm -f ./helm/values-production.yaml
-
-helm-template-staging: ## Mostra o YAML que seria aplicado em staging (sem tocar no cluster)
-	helm template projeto-final ./helm -f ./helm/values-staging.yaml
-
-helm-template-production: ## Mostra o YAML que seria aplicado em produção (sem tocar no cluster)
-	helm template projeto-final ./helm -f ./helm/values-production.yaml
-
-helm-install-staging: ## Aplica o chart em staging (requer kubectl configurado para o cluster certo)
-	helm upgrade --install projeto-final ./helm \
-		-n staging --create-namespace \
-		-f ./helm/values-staging.yaml
-
-helm-install-production: ## Aplica o chart em produção (requer kubectl configurado para o cluster certo)
-	helm upgrade --install projeto-final ./helm \
-		-n production --create-namespace \
-		-f ./helm/values-production.yaml
-
-token: install ## Obtém um token real do Keycloak local (usa: make token USERNAME=daniel PASSWORD=...)
+token: install 
 	$(VENV_PY) scripts/get_token.py --grant password \
 		--username $${USERNAME:-daniel} \
 		--password "$${PASSWORD:-MudaEstaPassword123!}"
@@ -147,44 +210,3 @@ k8s-observability-apply: ## Aplica Jaeger + Prometheus + Grafana (namespace obse
 
 k8s-auth-apply: ## Aplica o Keycloak (namespace auth) — requer kubectl configurado
 	kubectl apply -f k8s/auth/
-
-
-## Validações de cada ambiente
-validate-dev: install
-	@echo "===== [DEV] Testes unitários — service-users ====="
-	cd service-users && ../$(VENV_PY) -m pytest tests/ -v
-	@echo "===== [DEV] Testes unitários — service-orders ====="
-	cd service-orders && ../$(VENV_PY) -m pytest tests/ -v
-	@echo "===== [DEV] OK ====="
-
-
-validate-staging: install
-	@echo "===== [STG] A iniciar ambiente ====="
-	$(COMPOSE) up -d --build
-	@echo "===== [STG] A aguardar serviços ====="
-	@until [ "$$(docker inspect --format='{{.State.Health.Status}}' projetofinal-service-users-1 2>/dev/null)" = "healthy" ]; do \
-	echo "A aguardar service-users..."; \
-	sleep 2; \
-	done
-	@until [ "$$(docker inspect --format='{{.State.Health.Status}}' projetofinal-service-orders-1 2>/dev/null)" = "healthy" ]; do \
-	echo "A aguardar service-orders..."; \
-	sleep 2; \
-	done
-
-	@echo "===== [STG] Serviços prontos ====="
-	@echo "===== [STG] Testes de integração ====="
-	USERS_URL=$(USERS_URL) ORDERS_URL=$(ORDERS_URL) \
-	$(VENV_PY) -m pytest tests/integration/ -v -m integration
-	@echo "===== [STG] OK ====="
-
-
-validate-production: install
-	@echo "===== [PRD] Helm lint ====="
-	helm lint ./helm
-	@echo "===== [PRD] Helm template ====="
-	helm template projeto-final ./helm \
-		-f ./helm/values-production.yaml > /tmp/projeto-final-production.yaml
-	@echo "===== [PRD] Smoke tests ====="
-	USERS_URL="$(USERS_URL)" ORDERS_URL="$(ORDERS_URL)" \
-		$(VENV_PY) -m pytest tests/smoke/ -v
-	@echo "===== [PRD] OK ====="

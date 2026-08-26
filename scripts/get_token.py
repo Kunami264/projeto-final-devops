@@ -1,27 +1,3 @@
-
-"""
-Obtém um token de acesso real do Keycloak, para testar a API
-manualmente ou depurar problemas de autenticação/autorização.
-
-Substitui o antigo `generate_token.py`: já não existe nenhum segredo
-partilhado capaz de assinar tokens offline — o Keycloak é a única
-entidade que os emite, com a sua chave privada RS256.
-
-Exemplos (valores por omissão assumem o docker-compose local):
-
-    Utilizador de demonstração "daniel" (Resource Owner Password
-    Credentials, client "api-cli") — cobre os 3 scopes definidos.
-    python scripts/get_token.py --grant password \\
-        --username daniel --password "MudaEstaPassword123!"
-
-    Token M2M do próprio service-orders (client_credentials) — útil
-    para reproduzir manualmente o que o service-orders faz ao chamar
-    o service-users. Troca o client-id consoante o ambiente:
-    service-orders-local / -staging / -production (cada um tem o seu
-    próprio segredo — ver k8s/auth/realm-export.json).
-    python scripts/get_token.py --grant client_credentials \\
-        --client-id service-orders-local --client-secret <segredo-do-realm-export>
-"""
 import argparse
 import sys
 
