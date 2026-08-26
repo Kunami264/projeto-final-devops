@@ -102,7 +102,7 @@ jobs:
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
-          password: ${{ secrets.GHCR_PAT }}
+          password: ${{ secrets.GHCR_TOKEN }}
 
       - name: Preparar metadados e tags da imagem
         id: meta

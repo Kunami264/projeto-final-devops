@@ -17,8 +17,6 @@ ORDERS_URL := http://localhost:8001
 .DEFAULT_GOAL := help
 .PHONY: help venv install \
         test test-unit test-integration test-smoke \
-        validate-dev validate-staging validate-production \
-        build up down restart logs ps \
         build up down restart logs ps abort \
         run-local stop-local \
         lint clean destroy \
