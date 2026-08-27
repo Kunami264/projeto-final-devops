@@ -330,7 +330,6 @@ jobs:
   smoke-prd:
     name: Smoke tests (PRD)
     needs: deploy-prd
-    environment: production
     runs-on: self-hosted
     timeout-minutes: 10
     steps:
@@ -382,7 +381,6 @@ jobs:
     needs: smoke-prd
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: self-hosted
-    environment: production
     timeout-minutes: 10
     steps:
       - name: Checkout do repositório
