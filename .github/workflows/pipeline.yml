@@ -247,6 +247,16 @@ jobs:
       - name: Checkout do repositório
         uses: actions/checkout@v5
 
+      - name: Garantir que o MicroK8s está operacional
+        run: |
+          set -euo pipefail
+          if ! microk8s status --wait-ready --timeout 5 >/dev/null 2>&1; then
+            echo "MicroK8s não está a responder — a iniciar..."
+            microk8s start
+          fi
+          microk8s status --wait-ready --timeout 120
+          echo "MicroK8s operacional."
+
       - name: Deploy no Kubernetes via Helm
         run: |
           set -euo pipefail
@@ -365,4 +375,51 @@ jobs:
         run: |
           kill "$(cat portforward_users.pid)" 2>/dev/null || true
           kill "$(cat portforward_orders.pid)" 2>/dev/null || true
+          shred -u kubeconfig-prd.yaml 2>/dev/null || rm -f kubeconfig-prd.yaml
+
+  cleanup-prd:
+    name: 🧹 Limpar PVC do Postgres, terminar MicroK8s e limpar Docker (fim de PRD)
+    needs: smoke-prd
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: self-hosted
+    environment: production
+    timeout-minutes: 10
+    steps:
+      - name: Repor acesso ao cluster (KUBECONFIG)
+        run: |
+          set -euo pipefail
+          umask 077
+          echo "${{ secrets.KUBE_CONFIG_PRD }}" | base64 -d > kubeconfig-prd.yaml
+          echo "KUBECONFIG=$(pwd)/kubeconfig-prd.yaml" >> "$GITHUB_ENV"
+
+      - name: Escalar o Postgres para 0 réplicas (liberta o PVC)
+        run: |
+          set -euo pipefail
+          kubectl -n production scale deployment/postgres-orders --replicas=0
+          kubectl -n production wait --for=delete pod \
+            -l app.kubernetes.io/name=postgres-orders --timeout=60s || true
+
+      - name: Apagar o PVC do Postgres (dados de produção)
+        run: |
+          set -euo pipefail
+          kubectl -n production delete pvc postgres-orders-pvc \
+            --wait=true --timeout=60s
+
+      - name: Parar o MicroK8s
+        run: |
+          set -euo pipefail
+          microk8s stop
+          echo "MicroK8s parado."
+
+      - name: Remover todos os containers Docker do runner
+        if: always()
+        run: docker ps -aq | xargs -r docker rm -f
+
+      - name: Remover todos os volumes Docker do runner
+        if: always()
+        run: docker volume ls -q | xargs -r docker volume rm -f
+
+      - name: Remover ficheiro sensível do disco do runner
+        if: always()
+        run: |
           shred -u kubeconfig-prd.yaml 2>/dev/null || rm -f kubeconfig-prd.yaml
