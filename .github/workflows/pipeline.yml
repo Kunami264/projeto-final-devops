@@ -378,13 +378,16 @@ jobs:
           shred -u kubeconfig-prd.yaml 2>/dev/null || rm -f kubeconfig-prd.yaml
 
   cleanup-prd:
-    name: 🧹 Limpar PVC do Postgres, terminar MicroK8s e limpar Docker (fim de PRD)
+    name: 🧹 Destruir infraestrutura (fim de PRD)
     needs: smoke-prd
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: self-hosted
     environment: production
     timeout-minutes: 10
     steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v5
+
       - name: Repor acesso ao cluster (KUBECONFIG)
         run: |
           set -euo pipefail
@@ -392,32 +395,38 @@ jobs:
           echo "${{ secrets.KUBE_CONFIG_PRD }}" | base64 -d > kubeconfig-prd.yaml
           echo "KUBECONFIG=$(pwd)/kubeconfig-prd.yaml" >> "$GITHUB_ENV"
 
-      - name: Escalar o Postgres para 0 réplicas (liberta o PVC)
+      - name: Remover todos os containers Docker do projeto
+        if: always()
         run: |
-          set -euo pipefail
-          kubectl -n production scale deployment/postgres-orders --replicas=0
-          kubectl -n production wait --for=delete pod \
-            -l app.kubernetes.io/name=postgres-orders --timeout=60s || true
+          docker ps -a --filter "name=^projeto-final-devops-" --format "{{.ID}}" \
+            | xargs -r docker rm -f
 
-      - name: Apagar o PVC do Postgres (dados de produção)
+      - name: Derrubar Docker Compose
+        if: always()
+        run: docker compose down -v --remove-orphans 2>/dev/null || true
+
+      - name: Remover imagens Docker do projeto
+        if: always()
         run: |
-          set -euo pipefail
-          kubectl -n production delete pvc postgres-orders-pvc \
-            --wait=true --timeout=60s
+          docker rmi $(docker images -q "projeto-final-devops*") 2>/dev/null || true
+
+      - name: Remover releases Helm
+        if: always()
+        run: |
+          helm uninstall projeto-final -n prd 2>/dev/null || true
+          helm uninstall projeto-final -n staging 2>/dev/null || true
+          helm uninstall projeto-final -n production 2>/dev/null || true
+
+      - name: Remover Services antigos do projeto
+        if: always()
+        run: |
+          kubectl delete svc service-orders service-users postgres-orders -n prd 2>/dev/null || true
+          kubectl delete svc service-orders service-users postgres-orders -n staging 2>/dev/null || true
+          kubectl delete svc service-orders service-users postgres-orders -n production 2>/dev/null || true
 
       - name: Parar o MicroK8s
-        run: |
-          set -euo pipefail
-          sudo snap stop microk8s || true
-          echo "MicroK8s parado."
-
-      - name: Remover todos os containers Docker do runner
         if: always()
-        run: docker ps -aq | xargs -r docker rm -f
-
-      - name: Remover todos os volumes Docker do runner
-        if: always()
-        run: docker volume ls -q | xargs -r docker volume rm -f
+        run: microk8s stop
 
       - name: Remover ficheiro sensível do disco do runner
         if: always()
