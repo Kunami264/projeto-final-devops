@@ -426,7 +426,7 @@ jobs:
 
       - name: Parar o MicroK8s
         if: always()
-        run: microk8s stop
+        run: sudo snap stop microk8s || true
 
       - name: Remover ficheiro sensível do disco do runner
         if: always()
