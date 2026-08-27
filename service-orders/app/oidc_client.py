@@ -1,21 +1,6 @@
-"""
-Cliente OAuth2 client_credentials — obtém e mantém em cache o token M2M
-que o service-orders usa para se autenticar junto do service-users.
-
-Ao contrário da iteração anterior (um JWT estático de longa duração
-injetado via Secret do Kubernetes), este módulo pede um token novo ao
-Keycloak sempre que o anterior está perto de expirar, usando as
-credenciais do próprio client "service-orders" (client_id + secret,
-grant_type=client_credentials). É o padrão correto para autenticação
-serviço-a-serviço com um Authorization Server real: o token deixa de
-ser um segredo de longa duração para passar a ser uma credencial de
-curta duração emitida sob pedido, com o client secret como único
-segredo persistente a proteger.
-"""
 import logging
 import threading
 import time
-
 import httpx
 
 logger = logging.getLogger("service-orders.oidc_client")

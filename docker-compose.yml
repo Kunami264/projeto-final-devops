@@ -1,9 +1,6 @@
-version: "3.9"
-
 services:
   postgres-orders:
     image: postgres:16-alpine
-    container_name: postgres-orders
     environment:
       - POSTGRES_USER=orders
       - POSTGRES_PASSWORD=orders_dev_password
@@ -20,7 +17,6 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
-    container_name: keycloak
     command: ["start-dev", "--import-realm"]
     environment:
       - KEYCLOAK_ADMIN=admin
@@ -51,7 +47,6 @@ services:
 
   service-users:
     build: ./service-users
-    container_name: service-users
     ports:
       - "8002:8002"
     environment:
@@ -74,7 +69,6 @@ services:
 
   service-orders:
     build: ./service-orders
-    container_name: service-orders
     ports:
       - "8001:8001"
     environment:
@@ -105,7 +99,6 @@ services:
 
   jaeger:
     image: jaegertracing/all-in-one:1.60
-    container_name: jaeger
     ports:
       - "16686:16686"
       - "4317:4317"
@@ -114,7 +107,6 @@ services:
 
   prometheus:
     image: prom/prometheus:v2.55.1
-    container_name: prometheus
     ports:
       - "9090:9090"
     volumes:
@@ -128,7 +120,6 @@ services:
 
   grafana:
     image: grafana/grafana:11.3.0
-    container_name: grafana
     ports:
       - "3000:3000"
     environment:

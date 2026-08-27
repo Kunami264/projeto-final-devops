@@ -1,27 +1,3 @@
-"""
-Autenticação e autorização da API — Bearer JWT (RS256) validado contra o
-Authorization Server (Keycloak), via JWKS.
-
-Ao contrário da iteração anterior (HS256 com segredo partilhado), este
-serviço já não conhece nenhum segredo capaz de assinar tokens — só
-verifica assinaturas com a chave pública do Keycloak, obtida em runtime
-no endpoint JWKS do realm (`{issuer}/protocol/openid-connect/certs`) e
-mantida em cache (`PyJWKClient`, TTL default da biblioteca). A
-autorização mantém-se por *scope* OAuth2 (claim `scope`, string
-separada por espaços) — Keycloak popula este claim automaticamente a
-partir dos Client Scopes atribuídos por omissão a cada client no realm
-`projeto-final` (ver k8s/auth/realm-export.json).
-
-Camada extra de defesa (opt-in, `OIDC_ALLOWED_CLIENTS`): scope por si só
-autoriza "o quê", mas não "quem" — um token com scope `users:read`
-emitido para *qualquer* client é aceite, mesmo que esse client nunca
-devesse chamar este serviço. Quando `OIDC_ALLOWED_CLIENTS` está
-definida (lista separada por vírgulas de `client_id`s, verificados
-contra o claim `azp`), passa a rejeitar com 403 qualquer token cujo
-`azp` não conste da lista — mesmo com o scope certo. Fica vazia por
-omissão (comportamento antigo, só scope) para não partir instalações
-existentes só por teres esquecido de a definir.
-"""
 import logging
 import os
 
