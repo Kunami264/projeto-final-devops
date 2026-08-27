@@ -408,7 +408,7 @@ jobs:
       - name: Parar o MicroK8s
         run: |
           set -euo pipefail
-          microk8s stop
+          sudo snap stop microk8s || true
           echo "MicroK8s parado."
 
       - name: Remover todos os containers Docker do runner
