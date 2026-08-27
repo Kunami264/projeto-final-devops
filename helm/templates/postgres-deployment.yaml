@@ -18,13 +18,6 @@ spec:
       labels:
         app: postgres-orders
     spec:
-<<<<<<< HEAD
-      securityContext:
-        runAsNonRoot: true
-        runAsUser: 999
-        fsGroup: 999
-=======
->>>>>>> dev
       containers:
         - name: postgres
           image: postgres:16-alpine
