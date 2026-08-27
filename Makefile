@@ -198,5 +198,13 @@ token: install
 		--username $${USERNAME:-daniel} \
 		--password "$${PASSWORD:-MudaEstaPassword123!}"
 
-k8s-auth-apply: 
-	$(KUBECTL) apply -f k8s/auth/
+token-m2m: install ## Obtém um token M2M (client_credentials) — usa: make token-m2m CLIENT_ID=service-orders-local CLIENT_SECRET=...
+	$(VENV_PY) scripts/get_token.py --grant client_credentials \
+		--client-id "$${CLIENT_ID:-service-orders-local}" \
+		--client-secret "$${CLIENT_SECRET:-troque-este-segredo-service-orders-local}"
+
+k8s-observability-apply: ## Aplica Jaeger + Prometheus + Grafana (namespace observability) — requer kubectl configurado
+	kubectl apply -f k8s/observability/
+
+k8s-auth-apply: ## Aplica o Keycloak (namespace auth) — requer kubectl configurado
+	kubectl apply -f k8s/auth/
