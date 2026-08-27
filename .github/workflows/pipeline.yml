@@ -332,6 +332,7 @@ jobs:
     needs: deploy-prd
     runs-on: self-hosted
     timeout-minutes: 10
+    environment: production-postdeploy
     steps:
       - uses: actions/checkout@v5
 
@@ -382,6 +383,7 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: self-hosted
     timeout-minutes: 10
+    environment: production-postdeploy
     steps:
       - name: Checkout do repositório
         uses: actions/checkout@v5
