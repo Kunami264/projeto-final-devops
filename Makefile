@@ -153,11 +153,26 @@ wait-prd-healthy:
 	@echo "===== [PRD] Workloads em execução ====="
 	$(KUBECTL) get pods,svc,hpa -n $(NAMESPACE)
 
-destroy: down clean 
+destroy:
+	@echo ">> Removendo todos os containers Docker do projeto..."
+	-docker ps -a --filter "name=^projeto-final-devops-" --format "{{.ID}}" | xargs -r docker rm -f
+
+	@echo ">> Derrubando Docker Compose..."
+	-docker compose down -v --remove-orphans 2>/dev/null || true
+
 	@echo ">> Removendo imagens Docker do projeto..."
 	-docker rmi $$(docker images -q "projeto-final-devops*") 2>/dev/null || true
-	@echo ">> Removendo release do Kubernetes PRD..."
-	-helm uninstall projeto-final -n $(NAMESPACE) 2>/dev/null || true
+
+	@echo ">> Removendo releases Helm..."
+	-helm uninstall projeto-final -n prd 2>/dev/null || true
+	-helm uninstall projeto-final -n staging 2>/dev/null || true
+	-helm uninstall projeto-final -n production 2>/dev/null || true
+
+	@echo ">> Removendo Services antigos do projeto..."
+	-sudo microk8s kubectl delete svc service-orders service-users postgres-orders -n prd 2>/dev/null || true
+	-sudo microk8s kubectl delete svc service-orders service-users postgres-orders -n staging 2>/dev/null || true
+	-sudo microk8s kubectl delete svc service-orders service-users postgres-orders -n production 2>/dev/null || true
+
 	@echo ">> Infraestrutura completamente removida. ✅"
 
 # ────────────────────────────────────────────────────────────────────
@@ -203,8 +218,6 @@ token-m2m: install ## Obtém um token M2M (client_credentials) — usa: make tok
 		--client-id "$${CLIENT_ID:-service-orders-local}" \
 		--client-secret "$${CLIENT_SECRET:-troque-este-segredo-service-orders-local}"
 
-k8s-observability-apply: ## Aplica Jaeger + Prometheus + Grafana (namespace observability) — requer kubectl configurado
-	kubectl apply -f k8s/observability/
 
 k8s-auth-apply: ## Aplica o Keycloak (namespace auth) — requer kubectl configurado
 	kubectl apply -f k8s/auth/
