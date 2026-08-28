@@ -283,16 +283,21 @@ jobs:
       - name: Aplicar stack de observabilidade (Prometheus, Jaeger, Grafana)
         run: |
           set -euo pipefail
+          
+          # Create the observability namespace first
+          kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
+          
           kubectl apply -f k8s/observability/
-
+          
           kubectl create secret generic grafana-admin -n observability \
             --from-literal=GF_SECURITY_ADMIN_USER=admin \
             --from-literal=GF_SECURITY_ADMIN_PASSWORD="${{ secrets.GRAFANA_ADMIN_PASSWORD_STG }}" \
             --dry-run=client -o yaml | kubectl apply -f -
-
+          
           kubectl -n observability rollout status deployment/prometheus --timeout=90s
           kubectl -n observability rollout status deployment/jaeger --timeout=90s
-          kubectl -n observability rollout status deployment/grafana --timeout=90s            
+          kubectl -n observability rollout status deployment/grafana --timeout=90s
+
       - name: Remover ficheiros sensíveis do disco do runner
         if: always()
         run: |
@@ -337,16 +342,21 @@ jobs:
       - name: Aplicar stack de observabilidade (Prometheus, Jaeger, Grafana)
         run: |
           set -euo pipefail
+          
+          # Create the observability namespace first
+          kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
+          
           kubectl apply -f k8s/observability/
-
+          
           kubectl create secret generic grafana-admin -n observability \
             --from-literal=GF_SECURITY_ADMIN_USER=admin \
-            --from-literal=GF_SECURITY_ADMIN_PASSWORD="${{ secrets.GRAFANA_ADMIN_PASSWORD_PRD }}" \
+            --from-literal=GF_SECURITY_ADMIN_PASSWORD="${{ secrets.GRAFANA_ADMIN_PASSWORD_STG }}" \
             --dry-run=client -o yaml | kubectl apply -f -
-
+          
           kubectl -n observability rollout status deployment/prometheus --timeout=90s
           kubectl -n observability rollout status deployment/jaeger --timeout=90s
           kubectl -n observability rollout status deployment/grafana --timeout=90s
+
       - name: Remover ficheiros sensíveis do disco do runner
         if: always()
         run: |
