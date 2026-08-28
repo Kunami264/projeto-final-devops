@@ -256,7 +256,9 @@ jobs:
           fi
           microk8s status --wait-ready --timeout 120
           echo "MicroK8s operacional."
-
+      - name: Iniciar o MicroK8s
+        if: always()
+        run: sudo snap start microk8s || true
       - name: Deploy no Kubernetes via Helm
         run: |
           set -euo pipefail
