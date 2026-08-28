@@ -256,7 +256,9 @@ jobs:
           fi
           microk8s status --wait-ready --timeout 120
           echo "MicroK8s operacional."
-
+      - name: Iniciar o MicroK8s
+        if: always()
+        run: sudo snap start microk8s || true
       - name: Deploy no Kubernetes via Helm
         run: |
           set -euo pipefail
@@ -277,6 +279,24 @@ jobs:
             -f secret-values.yaml \
             --set image.tag="sha-${{ github.sha }}" \
             --wait --timeout 2m
+
+      - name: Aplicar stack de observabilidade (Prometheus, Jaeger, Grafana)
+        run: |
+          set -euo pipefail
+          
+          # Create the observability namespace first
+          kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
+          
+          kubectl apply -f k8s/observability/
+          
+          kubectl create secret generic grafana-admin -n observability \
+            --from-literal=GF_SECURITY_ADMIN_USER=admin \
+            --from-literal=GF_SECURITY_ADMIN_PASSWORD="${{ secrets.GRAFANA_ADMIN_PASSWORD_STG }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          kubectl -n observability rollout status deployment/prometheus --timeout=90s
+          kubectl -n observability rollout status deployment/jaeger --timeout=90s
+          kubectl -n observability rollout status deployment/grafana --timeout=90s
 
       - name: Remover ficheiros sensíveis do disco do runner
         if: always()
@@ -319,6 +339,23 @@ jobs:
             -f secret-values.yaml \
             --set image.tag="sha-${{ github.sha }}" \
             --wait --timeout 2m
+      - name: Aplicar stack de observabilidade (Prometheus, Jaeger, Grafana)
+        run: |
+          set -euo pipefail
+          
+          # Create the observability namespace first
+          kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
+          
+          kubectl apply -f k8s/observability/
+          
+          kubectl create secret generic grafana-admin -n observability \
+            --from-literal=GF_SECURITY_ADMIN_USER=admin \
+            --from-literal=GF_SECURITY_ADMIN_PASSWORD="${{ secrets.GRAFANA_ADMIN_PASSWORD_STG }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+          
+          kubectl -n observability rollout status deployment/prometheus --timeout=90s
+          kubectl -n observability rollout status deployment/jaeger --timeout=90s
+          kubectl -n observability rollout status deployment/grafana --timeout=90s
 
       - name: Remover ficheiros sensíveis do disco do runner
         if: always()
@@ -423,7 +460,9 @@ jobs:
           kubectl delete svc service-orders service-users postgres-orders -n prd 2>/dev/null || true
           kubectl delete svc service-orders service-users postgres-orders -n staging 2>/dev/null || true
           kubectl delete svc service-orders service-users postgres-orders -n production 2>/dev/null || true
-
+      - name: Remover a stack de observabilidade
+        if: always()
+        run: kubectl delete namespace observability --wait=true --timeout=60s 2>/dev/null || true
       - name: Parar o MicroK8s
         if: always()
         run: sudo snap stop microk8s || true
