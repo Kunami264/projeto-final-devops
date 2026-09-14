@@ -251,10 +251,19 @@ jobs:
           set -euo pipefail
           if ! microk8s status --wait-ready --timeout 5 >/dev/null 2>&1; then
             echo "MicroK8s não está a responder — a iniciar..."
-            sudo snap start microk8s
+            microk8s start
           fi
           microk8s status --wait-ready --timeout 120
-          echo "MicroK8s operacional."
+
+          echo "A confirmar que o API server responde a pedidos reais..."
+          for i in $(seq 1 15); do
+            if microk8s kubectl get --raw /readyz >/dev/null 2>&1; then
+              echo "API server pronto."
+              break
+            fi
+            echo "Ainda não está pronto, a tentar de novo (${i}/15)..."
+            sleep 4
+          done
 
       - name: Deploy no Kubernetes via Helm
         run: |
