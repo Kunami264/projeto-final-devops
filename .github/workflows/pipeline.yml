@@ -252,7 +252,7 @@ jobs:
           set -euo pipefail
           if ! microk8s status --wait-ready --timeout 5 >/dev/null 2>&1; then
             echo "MicroK8s não está a responder — a iniciar..."
-            microk8s start
+            sudo snap start microk8s
           fi
           microk8s status --wait-ready --timeout 120
           echo "MicroK8s operacional."
