@@ -293,7 +293,11 @@ jobs:
           # Create the observability namespace first
           kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
           
-          kubectl apply -f k8s/observability/
+          kubectl apply \
+            -f k8s/observability/jaeger.yaml \
+            -f k8s/observability/networkpolicy.yaml \
+            -f k8s/observability/prometheus.yaml \
+            -f k8s/observability/grafana.yaml
           
           kubectl create secret generic grafana-admin -n observability \
             --from-literal=GF_SECURITY_ADMIN_USER=admin \
@@ -352,11 +356,15 @@ jobs:
           # Create the observability namespace first
           kubectl create namespace observability --dry-run=client -o yaml | kubectl apply -f -
           
-          kubectl apply -f k8s/observability/
+          kubectl apply \
+            -f k8s/observability/jaeger.yaml \
+            -f k8s/observability/networkpolicy.yaml \
+            -f k8s/observability/prometheus.yaml \
+            -f k8s/observability/grafana.yaml
           
           kubectl create secret generic grafana-admin -n observability \
             --from-literal=GF_SECURITY_ADMIN_USER=admin \
-            --from-literal=GF_SECURITY_ADMIN_PASSWORD="${{ secrets.GRAFANA_ADMIN_PASSWORD_STG }}" \
+            --from-literal=GF_SECURITY_ADMIN_PASSWORD="${{ secrets.GRAFANA_ADMIN_PASSWORD_PRD }}" \
             --dry-run=client -o yaml | kubectl apply -f -
           
           kubectl -n observability rollout status deployment/prometheus --timeout=90s
@@ -412,6 +420,35 @@ jobs:
           USERS_URL: http://localhost:8002
           ORDERS_URL: http://localhost:8001
         run: python -m pytest tests/smoke/ -v
+
+      - name: Capturar evidência de observabilidade (Prometheus, logs)
+        if: always()
+        run: |
+          set +e
+          export KUBECONFIG="$(pwd)/kubeconfig-prd.yaml"
+
+          echo "## Observabilidade — resumo da execução" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### Métricas (Prometheus /api/v1/query?query=up)" >> "$GITHUB_STEP_SUMMARY"
+          kubectl port-forward -n observability svc/prometheus 9090:9090 >/dev/null 2>&1 &
+          PF_PROM=$!
+          sleep 3
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          curl -s 'http://localhost:9090/api/v1/query?query=up' | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          kill $PF_PROM 2>/dev/null
+
+          echo "### Logs recentes — service-orders" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          kubectl logs -n production -l app=service-orders --tail=30 --since=5m >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### Logs recentes — service-users" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          kubectl logs -n production -l app=service-users --tail=30 --since=5m >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          echo "_Traces completos: \`kubectl port-forward -n observability svc/jaeger 16686:16686\` enquanto o cluster ainda existir._" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fechar port-forward e limpar kubeconfig
         if: always()
