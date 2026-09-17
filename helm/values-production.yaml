@@ -23,7 +23,9 @@ serviceOrders:
 oidc:
   issuer: "http://keycloak.auth.svc.cluster.local:8080/realms/projeto-final"
   clientId: "service-orders-production"
-  allowedClientsForUsers: "service-orders-production"
+  clientSecret: "troque-este-segredo-service-orders-production" 
+  allowedClientsForUsers: "service-orders-production,api-cli"   
+  allowedClientsForOrders: "api-cli"
 
 postgres:
   storage: 5Gi

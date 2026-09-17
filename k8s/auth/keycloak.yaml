@@ -11,7 +11,7 @@ metadata:
 type: Opaque
 stringData:
   KEYCLOAK_ADMIN: admin
-  KEYCLOAK_ADMIN_PASSWORD: "troque-esta-password-admin"
+  KEYCLOAK_ADMIN_PASSWORD: admin
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -278,8 +278,8 @@ spec:
               cpu: 300m
               memory: 512Mi
             limits:
-              cpu: 800m
-              memory: 1Gi
+              cpu: 1000m
+              memory: 1536Mi
       volumes:
         - name: realm-import
           configMap:

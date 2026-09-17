@@ -1,0 +1,9 @@
+global:
+  scrape_interval: 15s
+scrape_configs:
+  - job_name: service-orders
+    static_configs:
+      - targets: ["service-orders:8001"]
+  - job_name: service-users
+    static_configs:
+      - targets: ["service-users:8002"]

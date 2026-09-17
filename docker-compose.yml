@@ -110,7 +110,7 @@ services:
     ports:
       - "9090:9090"
     volumes:
-      - ./k8s/observability/prometheus-local.yml:/etc/prometheus/prometheus.yml:ro
+      - ./k8s/observability/prometheus-dev.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     networks:
       - app-network
@@ -124,7 +124,7 @@ services:
       - "3000:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin_dev_password
+      - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_USERS_ALLOW_SIGN_UP=false
     volumes:
       - grafana-data:/var/lib/grafana

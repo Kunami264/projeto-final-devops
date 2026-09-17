@@ -6,3 +6,6 @@ image:
 postgres:
   credentials:
     password: "staging-troque-esta-password"
+
+oidc:
+  clientSecret: "troque-este-segredo-service-orders-staging"
