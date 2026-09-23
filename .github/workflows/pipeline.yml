@@ -286,7 +286,7 @@ jobs:
             -f ./helm/values-staging.yaml \
             -f secret-values.yaml \
             --set image.tag="sha-${{ github.sha }}" \
-            --wait --timeout 2m
+            --wait --timeout 5m
 
       - name: Aplicar stack de observabilidade (Prometheus, Jaeger, Grafana)
         run: |

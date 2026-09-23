@@ -3,6 +3,9 @@ environment: staging
 image:
   tag: stg
 
+imagePullSecrets:
+  - name: ghcr-secret
+  
 postgres:
   credentials:
     password: "staging-troque-esta-password"
