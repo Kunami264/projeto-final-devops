@@ -267,13 +267,21 @@ jobs:
             sleep 4
           done
       - name: Atualizar credencial GHCR no Kubernetes
+        env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN_STG }}
         run: |
+          set -euo pipefail
+          test -n "$GHCR_PULL_TOKEN" || {
+            echo "GHCR_PULL_TOKEN_STG não está definido no Environment staging."
+            exit 1
+          }
+
           kubectl create namespace staging --dry-run=client -o yaml | kubectl apply -f -
 
           kubectl -n staging create secret docker-registry microk8s-staging-pull \
             --docker-server=ghcr.io \
             --docker-username=kunami264 \
-            --docker-password="${{ secrets.GHCR_PULL_TOKEN_STG }}" \
+            --docker-password="$GHCR_PULL_TOKEN" \
             --dry-run=client -o yaml | kubectl apply -f -
       - name: Deploy no Kubernetes via Helm
         run: |
@@ -340,7 +348,15 @@ jobs:
       - name: Checkout do repositório
         uses: actions/checkout@v5
       - name: Atualizar credencial GHCR no Kubernetes
+        env:
+          GHCR_PULL_TOKEN: ${{ secrets.GHCR_PULL_TOKEN_PRD }}
         run: |
+          set -euo pipefail
+          test -n "$GHCR_PULL_TOKEN" || {
+            echo "GHCR_PULL_TOKEN_PRD não está definido no Environment production."
+            exit 1
+          }
+
           kubectl create namespace production --dry-run=client -o yaml | kubectl apply -f -
 
           kubectl -n production create secret docker-registry microk8s-production-pull \
