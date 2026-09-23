@@ -266,14 +266,23 @@ jobs:
             echo "Ainda não está pronto, a tentar de novo (${i}/15)..."
             sleep 4
           done
+      - name: Atualizar credencial GHCR no Kubernetes
+        run: |
+          kubectl create namespace staging --dry-run=client -o yaml | kubectl apply -f -
 
+          kubectl -n staging create secret docker-registry microk8s-staging-pull \
+            --docker-server=ghcr.io \
+            --docker-username=kunami264 \
+            --docker-password="${{ secrets.GHCR_PULL_TOKEN_STG }}" \
+            --dry-run=client -o yaml | kubectl apply -f -
       - name: Deploy no Kubernetes via Helm
         run: |
           set -euo pipefail
           umask 077
 
-          echo "${{ secrets.KUBE_CONFIG_STG }}" | base64 -d > kubeconfig-stg.yaml
-          export KUBECONFIG="$(pwd)/kubeconfig-stg.yaml"
+          microk8s config > kubeconfig-stg.yaml
+          export KUBECONFIG="$PWD/kubeconfig-stg.yaml"
+          kubectl get nodes
 
           cat > secret-values.yaml <<EOF
           oidc:
@@ -286,7 +295,7 @@ jobs:
             -f ./helm/values-staging.yaml \
             -f secret-values.yaml \
             --set image.tag="sha-${{ github.sha }}" \
-            --wait --timeout 5m
+            --wait --timeout 2m
 
       - name: Aplicar stack de observabilidade (Prometheus, Jaeger, Grafana)
         run: |
@@ -330,14 +339,23 @@ jobs:
     steps:
       - name: Checkout do repositório
         uses: actions/checkout@v5
+      - name: Atualizar credencial GHCR no Kubernetes
+        run: |
+          kubectl create namespace production --dry-run=client -o yaml | kubectl apply -f -
 
+          kubectl -n production create secret docker-registry microk8s-production-pull \
+            --docker-server=ghcr.io \
+            --docker-username=kunami264 \
+            --docker-password="${{ secrets.GHCR_PULL_TOKEN_PRD }}" \
+            --dry-run=client -o yaml | kubectl apply -f -    
       - name: Deploy no Kubernetes via Helm (namespace production)
         run: |
           set -euo pipefail
           umask 077
 
-          echo "${{ secrets.KUBE_CONFIG_PRD }}" | base64 -d > kubeconfig-prd.yaml
-          export KUBECONFIG="$(pwd)/kubeconfig-prd.yaml"
+          microk8s config > kubeconfig-prd.yaml
+          export KUBECONFIG="$PWD/kubeconfig-prd.yaml"
+          kubectl get nodes
 
           cat > secret-values.yaml <<EOF
           oidc:
