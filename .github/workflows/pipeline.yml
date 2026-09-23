@@ -156,11 +156,11 @@ jobs:
         run: python -m pytest tests/ -v
 
   test-integration:
-    name: Testes de integração (STG/PRD)
+    name: Testes de integração (STG)
     needs: build
     if: >-
-      github.ref == 'refs/heads/stg' || github.ref == 'refs/heads/main' ||
-      github.base_ref == 'stg' || github.base_ref == 'main'
+      github.ref == 'refs/heads/stg' || 
+      github.base_ref == 'stg' 
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -333,10 +333,87 @@ jobs:
           set -euo pipefail
           shred -u kubeconfig-stg.yaml secret-values.yaml 2>/dev/null || \
             rm -f kubeconfig-stg.yaml secret-values.yaml
+  smoke-prd:
+    name: Smoke tests (PRD)
+    needs: build
+    runs-on: self-hosted
+    timeout-minutes: 10
+    environment: production-postdeploy
+    steps:
+      - uses: actions/checkout@v5
 
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Abrir port-forward para os serviços (interno)
+        run: |
+          echo "${{ secrets.KUBE_CONFIG_PRD }}" | base64 -d > kubeconfig-prd.yaml
+          export KUBECONFIG="$(pwd)/kubeconfig-prd.yaml"
+          
+          kubectl port-forward -n production svc/service-users 8002:8002 > pf_users.log 2>&1 & 
+          echo $! > portforward_users.pid
+          
+          kubectl port-forward -n production svc/service-orders 8001:8001 > pf_orders.log 2>&1 &
+          echo $! > portforward_orders.pid
+
+          sleep 10
+
+          echo "=== LOGS DO PORT-FORWARD USERS ==="
+          cat pf_users.log
+          echo "=== LOGS DO PORT-FORWARD ORDERS ==="
+          cat pf_orders.log
+
+      - name: Correr smoke tests contra produção
+        env:
+          USERS_URL: http://localhost:8002
+          ORDERS_URL: http://localhost:8001
+        run: python -m pytest tests/smoke/ -v
+
+      - name: Capturar evidência de observabilidade (Prometheus, logs)
+        if: always()
+        run: |
+          set +e
+          export KUBECONFIG="$(pwd)/kubeconfig-prd.yaml"
+
+          echo "## Observabilidade — resumo da execução" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### Métricas (Prometheus /api/v1/query?query=up)" >> "$GITHUB_STEP_SUMMARY"
+          kubectl port-forward -n observability svc/prometheus 9090:9090 >/dev/null 2>&1 &
+          PF_PROM=$!
+          sleep 3
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          curl -s 'http://localhost:9090/api/v1/query?query=up' | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          kill $PF_PROM 2>/dev/null
+
+          echo "### Logs recentes — service-orders" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          kubectl logs -n production -l app=service-orders --tail=30 --since=5m >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### Logs recentes — service-users" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          kubectl logs -n production -l app=service-users --tail=30 --since=5m >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          echo "_Traces completos: \`kubectl port-forward -n observability svc/jaeger 16686:16686\` enquanto o cluster ainda existir._" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Fechar port-forward e limpar kubeconfig
+        if: always()
+        run: |
+          kill "$(cat portforward_users.pid)" 2>/dev/null || true
+          kill "$(cat portforward_orders.pid)" 2>/dev/null || true
+          shred -u kubeconfig-prd.yaml 2>/dev/null || rm -f kubeconfig-prd.yaml
   deploy-prd:
     name: 🔒 Deploy PRD (Helm, com aprovação manual)
-    needs: test-integration
+    needs: smoke-prd
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: self-hosted
     environment: production
@@ -414,88 +491,9 @@ jobs:
           shred -u kubeconfig-prd.yaml secret-values.yaml 2>/dev/null || \
             rm -f kubeconfig-prd.yaml secret-values.yaml
 
-  smoke-prd:
-    name: Smoke tests (PRD)
-    needs: deploy-prd
-    runs-on: self-hosted
-    timeout-minutes: 10
-    environment: production-postdeploy
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Configurar Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements.txt
-
-      - name: Instalar dependências
-        run: pip install -r requirements.txt
-
-      - name: Abrir port-forward para os serviços (interno)
-        run: |
-          echo "${{ secrets.KUBE_CONFIG_PRD }}" | base64 -d > kubeconfig-prd.yaml
-          export KUBECONFIG="$(pwd)/kubeconfig-prd.yaml"
-          
-          kubectl port-forward -n production svc/service-users 8002:8002 > pf_users.log 2>&1 & 
-          echo $! > portforward_users.pid
-          
-          kubectl port-forward -n production svc/service-orders 8001:8001 > pf_orders.log 2>&1 &
-          echo $! > portforward_orders.pid
-
-          sleep 10
-
-          echo "=== LOGS DO PORT-FORWARD USERS ==="
-          cat pf_users.log
-          echo "=== LOGS DO PORT-FORWARD ORDERS ==="
-          cat pf_orders.log
-
-      - name: Correr smoke tests contra produção
-        env:
-          USERS_URL: http://localhost:8002
-          ORDERS_URL: http://localhost:8001
-        run: python -m pytest tests/smoke/ -v
-
-      - name: Capturar evidência de observabilidade (Prometheus, logs)
-        if: always()
-        run: |
-          set +e
-          export KUBECONFIG="$(pwd)/kubeconfig-prd.yaml"
-
-          echo "## Observabilidade — resumo da execução" >> "$GITHUB_STEP_SUMMARY"
-
-          echo "### Métricas (Prometheus /api/v1/query?query=up)" >> "$GITHUB_STEP_SUMMARY"
-          kubectl port-forward -n observability svc/prometheus 9090:9090 >/dev/null 2>&1 &
-          PF_PROM=$!
-          sleep 3
-          echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          curl -s 'http://localhost:9090/api/v1/query?query=up' | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          kill $PF_PROM 2>/dev/null
-
-          echo "### Logs recentes — service-orders" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          kubectl logs -n production -l app=service-orders --tail=30 --since=5m >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-          echo "### Logs recentes — service-users" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          kubectl logs -n production -l app=service-users --tail=30 --since=5m >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-          echo "_Traces completos: \`kubectl port-forward -n observability svc/jaeger 16686:16686\` enquanto o cluster ainda existir._" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Fechar port-forward e limpar kubeconfig
-        if: always()
-        run: |
-          kill "$(cat portforward_users.pid)" 2>/dev/null || true
-          kill "$(cat portforward_orders.pid)" 2>/dev/null || true
-          shred -u kubeconfig-prd.yaml 2>/dev/null || rm -f kubeconfig-prd.yaml
-
   cleanup-prd:
     name: 🧹 Destruir infraestrutura (fim de PRD)
-    needs: smoke-prd
+    needs: deploy-prd
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: self-hosted
     timeout-minutes: 10
