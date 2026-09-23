@@ -17,7 +17,7 @@ KUBECTL         := sudo snap run microk8s kubectl
 # Namespaces Kubernetes
 
 NAMESPACE_STG   := staging
-NAMESPACE_PRD   := prd
+NAMESPACE_PRD   := production
 NAMESPACE_AUTH  := auth
 NAMESPACE_OBS   := observability
 
