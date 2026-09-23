@@ -2,10 +2,9 @@ environment: staging
 
 image:
   tag: stg
+  pullSecretName: microk8s-staging-pull
 
-imagePullSecrets:
-  - name: ghcr-secret
-  
+
 postgres:
   credentials:
     password: "staging-troque-esta-password"
