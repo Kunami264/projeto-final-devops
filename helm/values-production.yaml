@@ -1,6 +1,8 @@
 environment: production
 
 image:
+  registry: ghcr.io
+  repository: kunami264/projeto-final-devops
   tag: main
   pullSecretName: microk8s-production-pull
 

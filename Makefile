@@ -17,7 +17,7 @@ KUBECTL         := sudo snap run microk8s kubectl
 # Namespaces Kubernetes
 
 NAMESPACE_STG   := staging
-NAMESPACE_PRD   := prd
+NAMESPACE_PRD   := production
 NAMESPACE_AUTH  := auth
 NAMESPACE_OBS   := observability
 
@@ -169,7 +169,7 @@ restart: down up ## [DEV] Reinicia os serviços Docker Compose
 logs: ## [DEV] Acompanha os logs dos containers
 	$(COMPOSE) logs -f
 
-validate-dev: install test-unit ## [DEV] Valida ambiente de desenvolvimento
+validate-dev: install up test-unit ## [DEV] Valida ambiente de desenvolvimento
 	@echo ""
 	@echo "===== [DEV] ✅ VALIDAÇÃO PASSOU ✅ ====="
 

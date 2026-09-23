@@ -4,7 +4,7 @@ image:
   registry: ghcr.io
   repository: kunami264/projeto-final-devops
   tag: stg
-  pullSecretName: ghcr-secret
+  pullSecretName: microk8s-staging-pull
 
 serviceUsers:
   replicas: 1
