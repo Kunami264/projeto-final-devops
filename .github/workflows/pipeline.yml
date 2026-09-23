@@ -251,7 +251,7 @@ jobs:
           set -euo pipefail
           if ! microk8s status --wait-ready --timeout 5 >/dev/null 2>&1; then
             echo "MicroK8s não está a responder — a reativar o snap..."
-            sudo snap start microk8s
+            sudo snap start microk8s || true
             sleep 5
             microk8s start
           fi
