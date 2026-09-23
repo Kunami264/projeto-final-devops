@@ -653,20 +653,19 @@ clean: ## Remove ficheiros temporários e ambiente Python
 # DESTROY
 # ════════════════════════════════════════════════════════════════════
 
-destroy: ## Remove aplicações, containers e ambiente Python
+destroy: ## Remove aplicações, Docker Compose e ambiente Python
 	@echo ""
 	@echo "===== [DESTROY] A remover aplicações ====="
+	@echo ""
 
 	@echo ">> A remover release STG..."
-	-helm uninstall projeto-final \
-		-n $(NAMESPACE_STG) || true
+	@unset KUBECONFIG; helm uninstall projeto-final -n $(NAMESPACE_STG) || true
 
 	@echo ">> A remover release PRD..."
-	-helm uninstall projeto-final \
-		-n $(NAMESPACE_PRD) || true
+	@unset KUBECONFIG; helm uninstall projeto-final -n $(NAMESPACE_PRD) || true
 
 	@echo ">> A parar Docker Compose..."
-	-$(COMPOSE) down -v --remove-orphans || true
+	$(COMPOSE) down -v --remove-orphans || true
 
 	@echo ">> A remover ambiente virtual Python..."
 	rm -rf $(VENV_DIR)
