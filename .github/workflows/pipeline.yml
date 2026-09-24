@@ -233,6 +233,32 @@ jobs:
           curl -sf http://localhost:8002/health
           curl -sf http://localhost:8001/health
 
+      - name: Capturar evidência de observabilidade (DEV)
+        if: always()
+        run: |
+          set +e
+          echo "## Observabilidade — DEV" >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### Métricas — Prometheus" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          curl -fsS 'http://localhost:9090/api/v1/query?query=up' | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### Traces recentes — service-orders (Jaeger)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          curl -fsS 'http://localhost:16686/api/traces?service=service-orders&limit=5&lookback=1h' | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### Logs recentes — service-orders" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          docker compose logs --tail=30 service-orders >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### Logs recentes — service-users" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          docker compose logs --tail=30 service-users >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
   deploy-stg:
     name: Deploy STG 
     needs: test-integration
@@ -276,13 +302,13 @@ jobs:
             exit 1
           }
 
-          kubectl create namespace staging --dry-run=client -o yaml | kubectl apply -f -
+          microk8s kubectl create namespace staging --dry-run=client -o yaml | microk8s kubectl apply -f -
 
-          kubectl -n staging create secret docker-registry microk8s-staging-pull \
+          microk8s kubectl -n staging create secret docker-registry microk8s-staging-pull \
             --docker-server=ghcr.io \
             --docker-username=kunami264 \
             --docker-password="$GHCR_PULL_TOKEN" \
-            --dry-run=client -o yaml | kubectl apply -f -
+            --dry-run=client -o yaml | microk8s kubectl apply -f -
       - name: Deploy no Kubernetes via Helm
         run: |
           set -euo pipefail
@@ -327,6 +353,43 @@ jobs:
           kubectl -n observability rollout status deployment/jaeger --timeout=90s
           kubectl -n observability rollout status deployment/grafana --timeout=90s
 
+      - name: Capturar evidência de observabilidade (STG)
+        if: always()
+        run: |
+          set +e
+          microk8s config > kubeconfig-stg.yaml
+          export KUBECONFIG="$PWD/kubeconfig-stg.yaml"
+          PF_PROM=""
+          PF_JAEGER=""
+          cleanup() { kill "$PF_PROM" "$PF_JAEGER" 2>/dev/null || true; }
+          trap cleanup EXIT
+
+          echo "## Observabilidade — STG" >> "$GITHUB_STEP_SUMMARY"
+          # Portas alternativas: 9090/16686 podem já pertencer ao DEV no mesmo runner.
+          kubectl port-forward -n observability svc/prometheus 19090:9090 >/dev/null 2>&1 & PF_PROM=$!
+          kubectl port-forward -n observability svc/jaeger 17686:16686 >/dev/null 2>&1 & PF_JAEGER=$!
+          sleep 5
+
+          echo "### Métricas — Prometheus" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          curl -fsS 'http://localhost:19090/api/v1/query?query=up' | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### Traces recentes — service-orders (Jaeger)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          curl -fsS 'http://localhost:17686/api/traces?service=service-orders&limit=5&lookback=1h' | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### Logs recentes — service-orders" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          kubectl logs -n staging -l app=service-orders --tail=30 --since=5m >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+          echo "### Logs recentes — service-users" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          kubectl logs -n staging -l app=service-users --tail=30 --since=5m >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
       - name: Remover ficheiros sensíveis do disco do runner
         if: always()
         run: |
@@ -357,13 +420,14 @@ jobs:
             exit 1
           }
 
-          kubectl create namespace production --dry-run=client -o yaml | kubectl apply -f -
+          microk8s status --wait-ready --timeout 120
+          microk8s kubectl create namespace production --dry-run=client -o yaml | microk8s kubectl apply -f -
 
-          kubectl -n production create secret docker-registry microk8s-production-pull \
+          microk8s kubectl -n production create secret docker-registry microk8s-production-pull \
             --docker-server=ghcr.io \
             --docker-username=kunami264 \
-            --docker-password="${{ secrets.GHCR_PULL_TOKEN_PRD }}" \
-            --dry-run=client -o yaml | kubectl apply -f -    
+            --docker-password="$GHCR_PULL_TOKEN" \
+            --dry-run=client -o yaml | microk8s kubectl apply -f -
       - name: Deploy no Kubernetes via Helm (namespace production)
         run: |
           set -euo pipefail
@@ -457,22 +521,33 @@ jobs:
           ORDERS_URL: http://localhost:8001
         run: python -m pytest tests/smoke/ -v
 
-      - name: Capturar evidência de observabilidade (Prometheus, logs)
+      - name: Capturar evidência de observabilidade (PRD)
         if: always()
         run: |
           set +e
-          export KUBECONFIG="$(pwd)/kubeconfig-prd.yaml"
+          microk8s config > kubeconfig-prd.yaml
+          export KUBECONFIG="$PWD/kubeconfig-prd.yaml"
+          PF_PROM=""
+          PF_JAEGER=""
+          cleanup() { kill "$PF_PROM" "$PF_JAEGER" 2>/dev/null || true; }
+          trap cleanup EXIT
 
-          echo "## Observabilidade — resumo da execução" >> "$GITHUB_STEP_SUMMARY"
+          echo "## Observabilidade — PRD" >> "$GITHUB_STEP_SUMMARY"
 
-          echo "### Métricas (Prometheus /api/v1/query?query=up)" >> "$GITHUB_STEP_SUMMARY"
-          kubectl port-forward -n observability svc/prometheus 9090:9090 >/dev/null 2>&1 &
-          PF_PROM=$!
-          sleep 3
+          # Portas alternativas: 9090/16686 podem já pertencer ao DEV no mesmo runner.
+          kubectl port-forward -n observability svc/prometheus 29090:9090 >/dev/null 2>&1 & PF_PROM=$!
+          kubectl port-forward -n observability svc/jaeger 27686:16686 >/dev/null 2>&1 & PF_JAEGER=$!
+          sleep 5
+
+          echo "### Métricas — Prometheus" >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          curl -s 'http://localhost:9090/api/v1/query?query=up' | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
+          curl -fsS 'http://localhost:29090/api/v1/query?query=up' | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          kill $PF_PROM 2>/dev/null
+
+          echo "### Traces recentes — service-orders (Jaeger)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```json' >> "$GITHUB_STEP_SUMMARY"
+          curl -fsS 'http://localhost:27686/api/traces?service=service-orders&limit=5&lookback=1h' | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
 
           echo "### Logs recentes — service-orders" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -484,7 +559,6 @@ jobs:
           kubectl logs -n production -l app=service-users --tail=30 --since=5m >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-          echo "_Traces completos: \`kubectl port-forward -n observability svc/jaeger 16686:16686\` enquanto o cluster ainda existir._" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Fechar port-forward e limpar kubeconfig
         if: always()
