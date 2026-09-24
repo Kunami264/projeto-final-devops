@@ -47,19 +47,16 @@ def _bypass_jwks(monkeypatch):
 
 @pytest.fixture
 def read_headers():
-    """Bearer token válido com o scope 'orders:read'."""
     return {"Authorization": f"Bearer {_make_token('orders:read')}"}
 
 
 @pytest.fixture
 def write_headers():
-    """Bearer token válido com o scope 'orders:write'."""
     return {"Authorization": f"Bearer {_make_token('orders:write')}"}
 
 
 @pytest.fixture
 def wrong_scope_headers():
-    """Bearer token válido mas sem qualquer scope de orders."""
     return {"Authorization": f"Bearer {_make_token('users:read')}"}
 
 

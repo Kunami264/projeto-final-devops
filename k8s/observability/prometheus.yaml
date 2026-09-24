@@ -56,7 +56,7 @@ data:
             namespaces:
               names:
                 - staging
-                - prd
+                - production
 
         relabel_configs:
           - source_labels:

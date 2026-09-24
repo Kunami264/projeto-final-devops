@@ -10,9 +10,6 @@ _EXPIRY_SAFETY_MARGIN_SECONDS = 15
 
 
 class ClientCredentialsTokenProvider:
-    """Thread-safe; pensado para um único processo uvicorn (sem workers
-    múltiplos). Com >1 worker, cada processo mantém a sua própria cache
-    — aceitável, dado o baixo custo de um pedido de token adicional."""
 
     def __init__(self, token_url: str, client_id: str, client_secret: str, timeout: float = 5.0):
         self._token_url = token_url

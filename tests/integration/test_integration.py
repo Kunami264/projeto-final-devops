@@ -21,10 +21,6 @@ DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "MudaEstaPassword123!")
 
 
 def _get_real_token() -> str:
-    """Pede um token a sério ao Keycloak (grant_type=password, client
-    api-cli) — ao contrário dos testes unitários, aqui não há nenhum
-    JWKS simulado: isto testa a integração real com o Authorization
-    Server, tal como aconteceria em produção."""
     last_error = None
     for attempt in range(10):
         try:
@@ -87,10 +83,6 @@ def test_orders_endpoint_requires_authentication():
 
 @pytest.mark.integration
 def test_order_creation_calls_users_service_end_to_end(orders_write_headers):
-    """Cobre a cadeia toda: Keycloak emite o token do utilizador →
-    service-orders valida-o (JWKS) → service-orders pede o seu próprio
-    token M2M ao Keycloak (client_credentials) → chama service-users →
-    service-users valida esse segundo token (JWKS) → responde."""
     payload = {"user_id": 2, "item": "Monitor 27\"", "quantity": 1}
     r = httpx.post(f"{ORDERS_URL}/orders", json=payload, headers=orders_write_headers, timeout=10)
     assert r.status_code == 200

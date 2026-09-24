@@ -1,18 +1,3 @@
-"""
-Logging estruturado (JSON) com correlação log ↔ trace.
-
-Cada linha de log inclui o trace_id/span_id do span OpenTelemetry ativo
-no momento em que foi emitida (quando existe um). Isto permite dois
-sentidos de investigação num incidente:
-  - a partir de uma linha de log suspeita, saltar diretamente para o
-    trace correspondente no Jaeger (pesquisa por trace_id);
-  - a partir de um trace lento/com erro no Jaeger, encontrar todas as
-    linhas de log emitidas durante esse pedido em qualquer serviço,
-    fazendo grep ao trace_id no agregador de logs (ex.: Loki/ELK).
-
-Sem esta correlação, logs e traces são dois silos que só se cruzam por
-timestamp aproximado — o que é lento e pouco fiável em produção sob carga.
-"""
 import json
 import logging
 
@@ -34,8 +19,6 @@ class TraceCorrelationFilter(logging.Filter):
 
 
 class JsonFormatter(logging.Formatter):
-    """Formato JSON de uma linha — pronto para um coletor (Fluent Bit,
-    Promtail, etc.) indexar sem regex frágeis."""
 
     def __init__(self, service_name: str):
         super().__init__()
@@ -57,9 +40,6 @@ class JsonFormatter(logging.Formatter):
 
 
 def configure_logging(service_name: str) -> logging.Logger:
-    """Substitui a configuração de logging por defeito por um handler
-    único, em JSON, com correlação de trace — incluindo para os loggers
-    do uvicorn, para que o access log também fique correlacionado."""
     handler = logging.StreamHandler()
     handler.setFormatter(JsonFormatter(service_name))
     handler.addFilter(TraceCorrelationFilter())
