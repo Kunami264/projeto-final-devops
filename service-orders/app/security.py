@@ -35,8 +35,6 @@ class TokenClaims:
 
 
 def _get_signing_key(token: str):
-    """Isolado numa função à parte para que os testes possam substituir
-    esta chamada (sem bater num Keycloak real) por uma chave RSA de teste."""
     try:
         return _jwks_client.get_signing_key_from_jwt(token).key
     except jwt.PyJWKClientError as exc:
@@ -83,8 +81,6 @@ def _decode_token(token: str) -> TokenClaims:
 
 
 def require_scope(*required: str):
-    """Dependency factory: exige um Bearer token válido com pelo menos um
-    dos scopes indicados. Uso: `Depends(require_scope("users:read"))`."""
     required_scopes = set(required)
 
     def _dependency(

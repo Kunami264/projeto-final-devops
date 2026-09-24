@@ -40,8 +40,6 @@ def _make_token(scope: str, subject: str = "test-suite", expires_in: int = 300, 
 
 @pytest.fixture(autouse=True)
 def _bypass_jwks(monkeypatch):
-    """Substitui a ida real ao JWKS do Keycloak pela chave pública de
-    teste gerada acima — aplica-se a todos os testes deste módulo."""
     from app import security
 
     monkeypatch.setattr(security, "_get_signing_key", lambda token: _public_pem)
@@ -49,17 +47,14 @@ def _bypass_jwks(monkeypatch):
 
 @pytest.fixture
 def auth_headers():
-    """Bearer token válido com o scope 'users:read'."""
     return {"Authorization": f"Bearer {_make_token('users:read')}"}
 
 
 @pytest.fixture
 def wrong_scope_headers():
-    """Bearer token válido mas sem o scope necessário."""
     return {"Authorization": f"Bearer {_make_token('orders:read')}"}
 
 
 @pytest.fixture
 def expired_token_headers():
-    """Bearer token expirado."""
     return {"Authorization": f"Bearer {_make_token('users:read', expires_in=-10)}"}
