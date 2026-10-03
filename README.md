@@ -61,6 +61,8 @@ O workflow principal encontra-se em:
 .github/workflows/pipeline.yml
 ```
 
+<img width="1859" height="1487" alt="20261003-HLD-ProjetoFinal-DevOps drawio" src="https://github.com/user-attachments/assets/1fc0c9e3-fe34-4a95-9a65-52f6043e6de3" />
+
 ---
 
 ## 3. Estrutura da Solução
