@@ -6,59 +6,66 @@ Este projeto implementa uma aplicação Python baseada em microsserviços, com i
 
 A solução é constituída por dois microsserviços **FastAPI**:
 
-- service-users — gestão de utilizadores;
-- service-orders — gestão de encomendas.
+- service-users - gestão de utilizadores;
+- service-orders - gestão de encomendas.
 
-Os serviços disponibilizam APIs HTTP com respostas em JSON. O service-orders comunica com o service-users através de HTTP/JSON e utiliza PostgreSQL para persistência. A autenticação e autorização são asseguradas pelo **Keycloak**, através de OIDC/JWT e scopes.
+Os serviços disponibilizam APIs HTTP com respostas em JSON.
+
+O service-orders comunica com o service-users através de HTTP/JSON e utiliza PostgreSQL para persistência.
+
+A autenticação e autorização são asseguradas pelo **Keycloak**, através de OIDC/JWT e scopes.
 
 A observabilidade integra **OpenTelemetry, Jaeger, Prometheus e Grafana**.
 
 O código é versionado com Git e disponibilizado no GitHub.
 
+---
 
-
-## 2. Arquitetura do pipeline
+## 2. Arquitetura do Pipeline
 
 O pipeline é implementado com **GitHub Actions** e organiza a promoção da aplicação através das branches:
 
-
-dev  →  stg  →  main
-DEV     STG      PRD
-
+```text
+dev → stg → main
+```
 
 | Ambiente | Branch | Execução | Validação |
-|---|---|---|---|
-| DEV | dev | Docker Compose | testes unitários + health checks |
-| STG | stg | Kubernetes/MicroK8s + Helm | testes de integração |
-| PRD | main | Kubernetes/MicroK8s + Helm | aprovação manual + smoke tests |
+|-----------|-----------|-----------|-----------|
+| DEV | dev | Docker Compose | Testes unitários + Health Checks |
+| STG | stg | Kubernetes/MicroK8s + Helm | Testes de Integração |
+| PRD | main | Kubernetes/MicroK8s + Helm | Aprovação manual + Smoke Tests |
 
-Fluxo simplificado:
+### Fluxo Simplificado
 
-
+```text
 Push / Pull Request
         ↓
-Análise de segurança (Trivy)
+Análise de Segurança (Trivy)
         ↓
 Build Docker / Buildx
         ↓
 Publicação no GHCR
         ↓
-Testes automatizados
+Testes Automatizados
         ↓
-Deploy no ambiente correspondente
+Deploy no Ambiente Correspondente
         ↓
-Validação pós-deploy
+Validação Pós-Deploy
+```
 
+As imagens são construídas para Linux/amd64 e Linux/arm64 e identificadas através do SHA do commit.
 
-As imagens são construídas para linux/amd64 e linux/arm64 (no meu caso pessoal uso arm64) e identificadas através do SHA do commit.
+O workflow principal encontra-se em:
 
-O workflow principal encontra-se em .github/workflows/pipeline.yml.
+```text
+.github/workflows/pipeline.yml
+```
 
-<img width="1859" height="1487" alt="20261003-HLD-ProjetoFinal-DevOps drawio" src="https://github.com/user-attachments/assets/170eccbf-9dca-460f-87bf-b95994812a4f" />
+---
 
+## 3. Estrutura da Solução
 
-## 3. Estrutura da solução
-
+```text
 ProjetoFinal/
 ├── .github/
 │   └── workflows/
@@ -81,255 +88,325 @@ ProjetoFinal/
 │   └── smoke/
 │       └── test_smoke.py
 ├── helm/
-│   ├── Chart.yaml
-│   ├── values.yaml
-│   ├── values-staging.yaml
-│   ├── values-production.yaml
-│   └── templates/
 ├── k8s/
-│   ├── auth/
-│   └── observability/
 ├── scripts/
 ├── docker-compose.yml
 ├── Makefile
 ├── pytest.ini
 ├── requirements.txt
 └── Arquitetura-ProjetoFinal.drawio
+```
 
+O Makefile constitui o principal ponto de entrada para build, testes, deploy, validação e limpeza local.
 
-O Makefile constitui o principal ponto de entrada para build, testes, deploy, validação e limpeza, localmente.
+---
 
-
-
-## 4. Implementação, build, teste e deploy
+## 4. Implementação, Build, Teste e Deploy
 
 ### 4.1 Preparação
 
-bash
+```bash
 git clone git@github.com:Kunami264/projeto-final-devops.git
+
 cd projeto-final-devops
+
 python3.12 -m venv venv
 source venv/bin/activate
+
 pip install -r requirements.txt
+```
 
+A promoção da aplicação segue:
 
-A promoção da aplicação segue dev → stg → main.
-
+```text
+dev → stg → main
+```
 
 ### 4.2 Microsserviços
 
-O service-users disponibiliza operações de gestão de utilizadores e o service-orders disponibiliza operações de gestão de encomendas. Ambos expõem, entre outros, /health e /metrics.
+O service-users disponibiliza operações de gestão de utilizadores.
 
-A criação de uma encomenda implica a validação do utilizador através de uma chamada HTTP entre os microsserviços:
+O service-orders disponibiliza operações de gestão de encomendas.
 
-Cliente → service-orders → service-users → PostgreSQL
+Ambos expõem endpoints como:
+
+```text
+/health
+/metrics
+```
+
+Fluxo de criação de encomenda:
+
+```text
+Cliente
+   ↓
+service-orders
+   ↓
+service-users
+   ↓
+PostgreSQL
+```
 
 Cada microsserviço possui um Dockerfile próprio.
 
+### 4.3 Autenticação e Autorização
 
-### 4.3 Autenticação e autorização
+O Keycloak fornece identidade e tokens JWT.
 
-O Keycloak fornece a identidade e os tokens JWT. As APIs validam autenticação, emissor, validade e scopes, incluindo:
+As APIs validam:
 
+- autenticação;
+- emissor;
+- validade do token;
+- scopes.
+
+Scopes utilizados:
+
+```text
 users:read
 orders:read
 orders:write
+```
 
+### 4.4 DEV - Docker Compose
 
-### 4.4 DEV — Docker Compose
+Execução:
 
-O ambiente DEV é executado com:
-
-bash
+```bash
 make up
+```
 
-São iniciados os microsserviços, PostgreSQL, Keycloak e a stack de observabilidade.
+Validação de disponibilidade:
 
-A disponibilidade dos serviços pode ser verificada com:
-
-bash
+```bash
 curl http://localhost:8002/health
 curl http://localhost:8001/health
+```
 
-Os testes unitários são executados com:
+Testes unitários:
 
-bash
+```bash
 make test-unit
+```
 
-A validação do ambiente pode ser realizada com:
+Validação completa:
 
-bash
+```bash
 make validate-dev
+```
 
+### 4.5 STG - Kubernetes/MicroK8s
 
-### 4.5 STG — Kubernetes/MicroK8s
+Verificação do cluster:
 
-A disponibilidade do cluster é verificada com:
+```bash
+sudo snap start microk8s
 
-bash (verificar o estado do microk8s -> iniciar com sudo snap start microk8s)
 sudo snap run microk8s status --wait-ready
 sudo snap run microk8s kubectl get nodes
+```
 
+Validação dos templates Helm:
 
-Antes do deploy são validados os templates Helm:
-
-bash
+```bash
 make helm-template-staging
+
 helm lint ./helm -f ./helm/values-staging.yaml
+```
 
+Deploy:
 
-O deploy é realizado com:
-
-bash
+```bash
 make helm-install-staging
+```
 
-A validação completa é executada com:
+Validação:
 
-bash
+```bash
 make validate-stg
+```
 
+### 4.6 PRD - Kubernetes/MicroK8s
 
-Esta validação inclui rollout dos deployments e testes de integração.
+Validação de templates:
 
-
-### 4.6 PRD — Kubernetes/MicroK8s
-
-Os templates de produção são validados com:
-
-bash
+```bash
 make helm-template-production
+```
 
+Deploy:
 
-O deploy é realizado com:
-
-bash
+```bash
 make helm-install-production
 make wait-prd-healthy
+```
 
+Smoke tests:
 
-O namespace utilizado pela configuração atual é production. No GitHub Actions, o deploy PRD requer aprovação manual através de um GitHub Environment protegido.
-
-Após o deploy são executados os smoke tests:
-
-bash
+```bash
 make test-smoke-prd
+```
 
+Validação completa:
 
-ou (para validação completa do ambiente):
-
-bash
+```bash
 make validate-prd
+```
 
+---
 
-
-## 5. Testes automatizados
+## 5. Testes Automatizados
 
 O projeto utiliza **Pytest** em três níveis:
 
-| Tipo | Localização | Nº de testes | Objetivo |
-| Unitários | service-users/tests | 11 | validação do service-users |
-| Unitários | service-orders/tests | 12 | validação do service-orders |
-| Integração | tests/integration | 7 | comunicação entre componentes |
-| Smoke | tests/smoke | 2 | disponibilidade pós-deploy |
-| **Total** | | **32** | |
+| Tipo | Localização | Nº Testes | Objetivo |
+|--------|--------|--------|--------|
+| Unitários | service-users/tests | 11 | Validação do service-users |
+| Unitários | service-orders/tests | 12 | Validação do service-orders |
+| Integração | tests/integration | 7 | Comunicação entre componentes |
+| Smoke | tests/smoke | 2 | Disponibilidade pós-deploy |
+| **Total** |  | **32** | |
 
-Os testes de integração validam, entre outros aspetos, Keycloak, os dois microsserviços, métricas e comunicação end-to-end. Os smoke tests verificam a disponibilidade dos serviços em produção.
+Os testes de integração validam:
 
-O número indicado corresponde aos testes definidos no código. As evidências dos testes encontra-se nas imagens com o passo 5.(...).
+- Keycloak;
+- microsserviços;
+- métricas;
+- comunicação end-to-end.
 
+---
 
+## 6. CI/CD e Segurança
 
-## 6. CI/CD e segurança
+O GitHub Actions automatiza:
 
-O GitHub Actions automatiza as fases de análise, build, teste e deploy.
+- Análise;
+- Build;
+- Testes;
+- Deploy.
 
-O **Trivy** é utilizado para análise de vulnerabilidades do código/dependências e das imagens Docker. O build utiliza Docker Buildx para amd64 e arm64, seguindo-se a publicação no **GitHub Container Registry (GHCR)**.
+O **Trivy** é utilizado para:
 
-A versão promovida é identificada pelo SHA do commit, permitindo associar cada ambiente a uma versão concreta do código.
+- análise de vulnerabilidades de dependências;
+- análise de imagens Docker.
 
-As credenciais e configurações sensíveis são disponibilizadas através de **GitHub Secrets/Environments**, não sendo armazenadas diretamente no código-fonte.
+O build utiliza:
 
+```text
+Docker Buildx
+```
 
+para:
+
+```text
+linux/amd64
+linux/arm64
+```
+
+As imagens são publicadas no:
+
+```text
+GitHub Container Registry (GHCR)
+```
+
+---
 
 ## 7. Observabilidade
 
 | Ferramenta | Função |
-| OpenTelemetry | instrumentação e geração de traces |
-| Jaeger | distributed tracing |
-| Prometheus | recolha de métricas |
-| Grafana | visualização e dashboards |
+|------------|---------|
+| OpenTelemetry | Instrumentação e geração de traces |
+| Jaeger | Distributed Tracing |
+| Prometheus | Recolha de métricas |
+| Grafana | Visualização e dashboards |
 
-Os microsserviços expõem métricas em /metrics e utilizam OpenTelemetry para rastreamento das transações, incluindo a comunicação entre service-orders e service-users.
+Os microsserviços expõem métricas através de:
 
+```text
+/metrics
+```
 
+---
 
-## 8. Problemas identificados e soluções
+## 8. Problemas Identificados e Soluções
 
 ### Execução do MicroK8s
 
-Foi necessário utilizar privilégios elevados para os comandos Kubernetes e iniciar o microk8s localmente antes de fazer um push para o GitHub Actions. O Makefile define:
-
-make
+```makefile
 KUBECTL := sudo snap run microk8s kubectl
+```
 
+### Conflitos de Portas
 
-### Conflitos de portas
+Solução:
 
-Foram identificados conflitos entre serviços Docker e Kubernetes. A solução consistiu na separação das portas por ambiente e na utilização de kubectl port-forward durante as validações.
-
+- Separação de portas por ambiente;
+- Utilização de `kubectl port-forward`.
 
 ### PostgreSQL em Kubernetes
 
-Foram identificados problemas de permissões no armazenamento persistente. A configuração do volume e das permissões foi ajustada para permitir a inicialização do PostgreSQL.
+Problema resolvido através de:
 
+- Ajuste de volumes persistentes;
+- Correção de permissões.
 
 ### NodePort
 
-Foram identificados conflitos de NodePort. A utilização de ClusterIP e port-forward reduziu a dependência de portas externas.
+Solução:
 
+- Utilização de ClusterIP;
+- Port Forwarding.
 
 ### Namespaces
 
-O namespace PRD atualmente utilizado é production. O namespace prd pode existir apenas como resultado de execuções anteriores e deve ser verificado durante a limpeza.
+Namespace atualmente utilizado em produção:
 
+```text
+production
+```
 
+---
 
-## 9. Evidências de validação (Encontra-se nas fotos enviadas as evidências dos testes realizados remotamente e localmente)
+## 9. Evidências de Validação
 
+```bash
 make test-unit
 make validate-dev
 make validate-stg
 make validate-prd
+```
 
+Evidências apresentadas:
 
-- execução dos testes unitários
-- execução dos testes de integração;
-- execução dos smoke tests;
-- deploy nos ambientes
-- métricas do Prometheus;
-- traces do Jaeger;
-- dashboard do Grafana.
+- Testes unitários;
+- Testes de integração;
+- Smoke tests;
+- Deploys;
+- Métricas Prometheus;
+- Traces Jaeger;
+- Dashboards Grafana.
 
+---
 
-
-## 10. Paragem, destruição e limpeza
-
+## 10. Paragem, Destruição e Limpeza
 
 ### 10.1 DEV
 
-bash
+```bash
 make down
+```
 
+### 10.2 MicroK8s
 
-### 10.2 MicroK8s e limpeza local
-
-bash
+```bash
 sudo snap stop microk8s
+
 make clean
+```
 
+Destruição completa:
 
-Pode ainda ser utilizado:
-
-bash
+```bash
 make destroy
+```
 
