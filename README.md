@@ -54,6 +54,7 @@ As imagens são construídas para linux/amd64 e linux/arm64 (no meu caso pessoal
 
 O workflow principal encontra-se em .github/workflows/pipeline.yml.
 
+<img width="1859" height="1487" alt="20261003-HLD-ProjetoFinal-DevOps drawio" src="https://github.com/user-attachments/assets/170eccbf-9dca-460f-87bf-b95994812a4f" />
 
 
 ## 3. Estrutura da solução
