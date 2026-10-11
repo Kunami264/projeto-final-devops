@@ -5,14 +5,20 @@
 {{- if and .Values.ingress.tls.enabled .Values.ingress.tls.certManager.enabled (not .Values.ingress.tls.certManager.clusterIssuer) }}
 {{- fail "ingress.tls.certManager.clusterIssuer é obrigatório quando cert-manager está ativo" }}
 {{- end }}
+{{- if and (eq .Values.environment "production") (not .Values.ingress.tls.enabled) }}
+{{- fail "Em produção o Ingress tem de ter TLS (ingress.tls.enabled=true)" }}
+{{- end }}
 {{- $annotations := deepCopy (.Values.ingress.annotations | default dict) }}
+{{- if .Values.ingress.tls.enabled }}
+{{- $_ := set $annotations "nginx.ingress.kubernetes.io/force-ssl-redirect" "true" }}
+{{- end }}
 {{- if .Values.ingress.tls.certManager.enabled }}
 {{- $_ := set $annotations "cert-manager.io/cluster-issuer" .Values.ingress.tls.certManager.clusterIssuer }}
 {{- end }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: service-orders
+  name: projeto-final
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "projeto-final.labels" . | nindent 4 }}
@@ -32,11 +38,25 @@ spec:
     - host: {{ .Values.ingress.host | quote }}
       http:
         paths:
-          - path: /
+          - path: /users
+            pathType: Prefix
+            backend:
+              service:
+                name: service-users
+                port:
+                  number: 8002
+          - path: /orders
             pathType: Prefix
             backend:
               service:
                 name: service-orders
                 port:
                   number: 8001
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  number: 8080
 {{- end }}

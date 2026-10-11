@@ -1,0 +1,47 @@
+name: Limpeza dos ambientes
+
+# Destrói TUDO o que o projeto criou no runner (PRD, STG, infraestrutura do
+# cluster e DEV). É manual de propósito: um deploy em PRD não se auto-destrói.
+on:
+  workflow_dispatch:
+    inputs:
+      confirmar:
+        description: 'Escreve "limpar" para confirmar a destruição de todos os ambientes'
+        required: true
+      parar_microk8s:
+        description: "Parar o MicroK8s no fim"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  cleanup:
+    name: 🧹 make clean
+    if: inputs.confirmar == 'limpar'
+    runs-on: self-hosted
+    environment: production-postdeploy
+    timeout-minutes: 20
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v5
+
+      - name: Preparar acesso ao cluster (KUBECONFIG)
+        run: |
+          set -euo pipefail
+          umask 077
+          microk8s status --wait-ready --timeout 120
+          microk8s config > kubeconfig-clean.yaml
+          echo "KUBECONFIG=$PWD/kubeconfig-clean.yaml" >> "$GITHUB_ENV"
+
+      - name: Limpar todos os ambientes
+        run: make clean MICROK8S=microk8s
+
+      - name: Parar o MicroK8s
+        if: inputs.parar_microk8s
+        run: sudo snap stop microk8s || true
+
+      - name: Remover ficheiro sensível do disco do runner
+        if: always()
+        run: shred -u kubeconfig-clean.yaml 2>/dev/null || rm -f kubeconfig-clean.yaml

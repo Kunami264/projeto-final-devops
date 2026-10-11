@@ -8,3 +8,5 @@ __pycache__/
 .env.*
 .git/
 .gitignore
+requirements-dev.txt
+*.db

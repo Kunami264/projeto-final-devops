@@ -23,6 +23,7 @@ def main() -> None:
     parser.add_argument("--username", help="Obrigatório para --grant password")
     parser.add_argument("--password", help="Obrigatório para --grant password")
     parser.add_argument("--scope", default=None, help="Scopes pedidos explicitamente (opcional — por omissão usam-se os default client scopes do realm)")
+    parser.add_argument("--insecure", action="store_true", help="Aceita certificado TLS self-signed (PRD local)")
     args = parser.parse_args()
 
     data = {
@@ -39,7 +40,7 @@ def main() -> None:
         data["scope"] = args.scope
 
     try:
-        resp = httpx.post(args.token_url, data=data, timeout=10)
+        resp = httpx.post(args.token_url, data=data, timeout=10, verify=not args.insecure)
         resp.raise_for_status()
     except httpx.HTTPStatusError as exc:
         sys.exit(f"Keycloak recusou o pedido ({exc.response.status_code}): {exc.response.text}")

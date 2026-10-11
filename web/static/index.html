@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="pt">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Backoffice — Clientes e Encomendas</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Login -->
+  <main id="login-view" class="login">
+    <form id="login-form" class="card">
+      <h1>Backoffice</h1>
+      <p class="muted">Gestão de clientes e encomendas</p>
+      <label>Utilizador
+        <input id="login-username" name="username" autocomplete="username" required autofocus>
+      </label>
+      <label>Password
+        <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+      </label>
+      <p id="login-error" class="error" role="alert" hidden></p>
+      <button type="submit" class="primary">Entrar</button>
+    </form>
+  </main>
+
+  <!-- Aplicação -->
+  <div id="app-view" hidden>
+    <header class="topbar">
+      <strong>Backoffice</strong>
+      <nav>
+        <button id="tab-users" class="tab active" data-tab="users">Clientes</button>
+        <button id="tab-orders" class="tab" data-tab="orders">Encomendas</button>
+      </nav>
+      <span class="spacer"></span>
+      <span id="session-user" class="muted"></span>
+      <button id="logout">Sair</button>
+    </header>
+
+    <p id="message" class="message" role="status" hidden></p>
+
+    <main>
+      <section id="users-panel">
+        <div class="panel-head">
+          <h2>Clientes</h2>
+          <button id="new-user" class="primary">Novo cliente</button>
+        </div>
+        <table>
+          <thead><tr><th>N.º</th><th>Nome</th><th>Email</th><th></th></tr></thead>
+          <tbody id="users-body"></tbody>
+        </table>
+        <p id="users-empty" class="muted" hidden>Ainda não há clientes.</p>
+      </section>
+
+      <section id="orders-panel" hidden>
+        <div class="panel-head">
+          <h2>Encomendas</h2>
+          <button id="new-order" class="primary">Nova encomenda</button>
+        </div>
+        <table>
+          <thead><tr><th>N.º</th><th>Cliente</th><th>Artigo</th><th>Quantidade</th><th></th></tr></thead>
+          <tbody id="orders-body"></tbody>
+        </table>
+        <p id="orders-empty" class="muted" hidden>Ainda não há encomendas.</p>
+      </section>
+    </main>
+  </div>
+
+  <!-- Formulário de cliente -->
+  <dialog id="user-dialog">
+    <form id="user-form" method="dialog">
+      <h3 id="user-dialog-title">Novo cliente</h3>
+      <label>Nome
+        <input id="user-name" required maxlength="120">
+      </label>
+      <label>Email
+        <input id="user-email" type="email" required maxlength="254">
+      </label>
+      <p id="user-error" class="error" role="alert" hidden></p>
+      <div class="actions">
+        <button type="button" data-close>Cancelar</button>
+        <button type="submit" class="primary">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Formulário de encomenda -->
+  <dialog id="order-dialog">
+    <form id="order-form" method="dialog">
+      <h3 id="order-dialog-title">Nova encomenda</h3>
+      <label id="order-user-field">Cliente
+        <select id="order-user" required></select>
+      </label>
+      <label>Artigo
+        <input id="order-item" required maxlength="200">
+      </label>
+      <label>Quantidade
+        <input id="order-quantity" type="number" min="1" step="1" required>
+      </label>
+      <p id="order-error" class="error" role="alert" hidden></p>
+      <div class="actions">
+        <button type="button" data-close>Cancelar</button>
+        <button type="submit" class="primary">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- Confirmação de remoção -->
+  <dialog id="confirm-dialog">
+    <form method="dialog">
+      <h3>Confirmar</h3>
+      <p id="confirm-text"></p>
+      <div class="actions">
+        <button type="button" data-close>Cancelar</button>
+        <button id="confirm-ok" type="submit" class="danger">Apagar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="app.js"></script>
+</body>
+</html>

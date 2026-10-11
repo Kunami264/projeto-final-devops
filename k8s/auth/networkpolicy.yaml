@@ -45,5 +45,12 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: production
+        # ingress controller (endpoint de token via HTTPS em PRD):
+        # "ingress" no MicroK8s, "ingress-nginx" na instalação standard
+        - namespaceSelector:
+            matchExpressions:
+              - key: kubernetes.io/metadata.name
+                operator: In
+                values: ["ingress", "ingress-nginx"]
       ports:
         - port: 8080
