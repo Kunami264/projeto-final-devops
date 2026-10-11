@@ -1,0 +1,5 @@
+# PRD — só os pacotes de runtime dos dois serviços. Sem módulos de teste.
+# É o conteúdo instalado nas imagens Docker (ver service-*/Dockerfile).
+# Em PRD nada é instalado no arranque: a imagem já traz tudo.
+-r service-users/requirements-prd.txt
+-r service-orders/requirements-prd.txt

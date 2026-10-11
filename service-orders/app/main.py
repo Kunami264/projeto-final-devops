@@ -2,7 +2,7 @@ import os
 import time
 
 import httpx
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
@@ -67,7 +67,7 @@ trace.set_tracer_provider(provider)
 app = FastAPI(
     title="service-orders",
     description="Microsserviço de gestão de encomendas",
-    version="1.3.0",
+    version="1.4.0",
 )
 FastAPIInstrumentor.instrument_app(app)
 HTTPXClientInstrumentor().instrument()
@@ -81,6 +81,11 @@ Base.metadata.create_all(bind=engine)
 
 class OrderCreate(BaseModel):
     user_id: int
+    item: str
+    quantity: int = Field(gt=0, description="Tem de ser um inteiro positivo")
+
+
+class OrderUpdate(BaseModel):
     item: str
     quantity: int = Field(gt=0, description="Tem de ser um inteiro positivo")
 
@@ -161,6 +166,39 @@ def get_order(
     if not order:
         raise HTTPException(status_code=404, detail="Encomenda não encontrada")
     return order.to_dict()
+
+
+@app.put("/orders/{order_id}", tags=["orders"])
+def update_order(
+    order_id: int,
+    data: OrderUpdate,
+    db: Session = Depends(get_db),
+    claims: TokenClaims = Depends(require_scope("orders:write")),
+) -> dict:
+    order = db.get(OrderModel, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Encomenda não encontrada")
+    order.item = data.item
+    order.quantity = data.quantity
+    db.commit()
+    db.refresh(order)
+    logger.info("Encomenda %d editada por '%s'", order_id, claims.subject)
+    return order.to_dict()
+
+
+@app.delete("/orders/{order_id}", status_code=204, tags=["orders"])
+def delete_order(
+    order_id: int,
+    db: Session = Depends(get_db),
+    claims: TokenClaims = Depends(require_scope("orders:write")),
+) -> Response:
+    order = db.get(OrderModel, order_id)
+    if not order:
+        raise HTTPException(status_code=404, detail="Encomenda não encontrada")
+    db.delete(order)
+    db.commit()
+    logger.info("Encomenda %d apagada por '%s'", order_id, claims.subject)
+    return Response(status_code=204)
 
 
 @app.get("/orders", tags=["orders"])

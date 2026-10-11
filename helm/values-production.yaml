@@ -13,22 +13,33 @@ serviceUsers:
     minReplicas: 2
     maxReplicas: 6
 
+web:
+  replicas: 2
+
 serviceOrders:
   replicas: 2
   autoscaling:
     enabled: true
     minReplicas: 2
     maxReplicas: 8
-  service:
-    type: NodePort
-    nodePort: 30001
+
+# Ponto de entrada único e seguro em PRD: HTTPS no Ingress (porta 443).
+# Os Services ficam ClusterIP — não há NodePort HTTP exposto.
+# O host e o certificado são definidos por `make run-prd` (PRD_HOST / make tls-prd).
+ingress:
+  enabled: true
+  className: public
+  host: projeto-final.test
+  tls:
+    enabled: true
+    secretName: projeto-final-tls
 
 oidc:
   issuer: "http://keycloak.auth.svc.cluster.local:8080/realms/projeto-final"
   clientId: "service-orders-production"
   clientSecret: "troque-este-segredo-service-orders-production" 
-  allowedClientsForUsers: "service-orders-production,api-cli"   
-  allowedClientsForOrders: "api-cli"
+  allowedClientsForUsers: "service-orders-production,api-cli,backoffice"
+  allowedClientsForOrders: "api-cli,backoffice"
 
 postgres:
   storage: 5Gi

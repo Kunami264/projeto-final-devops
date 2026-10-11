@@ -43,9 +43,23 @@ serviceOrders:
   retries: 2
   timeoutSeconds: 5
 
+web:
+  replicas: 1
+  keycloakUrl: "http://keycloak.auth.svc.cluster.local:8080"
+  resources:
+    requests:
+      cpu: 25m
+      memory: 32Mi
+    limits:
+      cpu: 100m
+      memory: 64Mi
+
 ingress:
   enabled: false
-  className: nginx
+  # IngressClass do addon "ingress" do MicroK8s.
+  className: public
+  # Namespace do ingress controller (para a NetworkPolicy do service-users).
+  controllerNamespace: ingress
   host: ""
   annotations: {}
   tls:
@@ -78,8 +92,8 @@ oidc:
   clientId: "service-orders-staging"
   clientSecret: ""
   requireClientSecret: false
-  allowedClientsForUsers: "service-orders-staging,api-cli"
-  allowedClientsForOrders: "api-cli"
+  allowedClientsForUsers: "service-orders-staging,api-cli,backoffice"
+  allowedClientsForOrders: "api-cli,backoffice"
 
 podDisruptionBudget:
   enabled: false

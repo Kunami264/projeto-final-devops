@@ -74,6 +74,15 @@ data:
           }
         },
         {
+          "name": "users:write",
+          "description": "Criação, edição e remoção de utilizadores (service-users).",
+          "protocol": "openid-connect",
+          "attributes": {
+            "include.in.token.scope": "true",
+            "display.on.consent.screen": "false"
+          }
+        },
+        {
           "name": "orders:read",
           "description": "Leitura de encomendas (service-orders).",
           "protocol": "openid-connect",
@@ -84,7 +93,7 @@ data:
         },
         {
           "name": "orders:write",
-          "description": "Criação de encomendas (service-orders).",
+          "description": "Criação, edição e remoção de encomendas (service-orders).",
           "protocol": "openid-connect",
           "attributes": {
             "include.in.token.scope": "true",
@@ -171,23 +180,45 @@ data:
             "basic",
             "orders:read",
             "orders:write",
-            "users:read"
+            "users:read",
+            "users:write"
           ],
           "optionalClientScopes": []
-        }
+        },
+          {
+            "clientId": "backoffice",
+            "name": "Backoffice web",
+            "description": "Aplicação web usada pelos funcionários. Client público (corre no browser, não guarda segredo); login com utilizador e password.",
+            "enabled": true,
+            "protocol": "openid-connect",
+            "publicClient": true,
+            "serviceAccountsEnabled": false,
+            "standardFlowEnabled": false,
+            "implicitFlowEnabled": false,
+            "directAccessGrantsEnabled": true,
+            "authorizationServicesEnabled": false,
+            "defaultClientScopes": [
+              "basic",
+              "orders:read",
+              "orders:write",
+              "users:read",
+              "users:write"
+            ],
+            "optionalClientScopes": []
+          }
       ],
       "users": [
         {
-          "username": "daniel",
+          "username": "admin",
           "enabled": true,
-          "email": "daniel@example.com",
+          "email": "admin@example.com",
           "emailVerified": true,
-          "firstName": "Daniel",
-          "lastName": "Utilizador Demo",
+          "firstName": "Administrador",
+          "lastName": "Demo",
           "credentials": [
             {
               "type": "password",
-              "value": "MudaEstaPassword123!",
+              "value": "admin",
               "temporary": false
             }
           ]

@@ -145,3 +145,80 @@ def test_azp_allowlist_accepts_client_in_list(read_headers, monkeypatch):
 
 
     assert r.status_code == 404
+
+
+@patch("app.main.httpx.Client")
+def test_delete_order(mock_client_cls, write_headers, read_headers):
+    mock_response = MagicMock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {
+        "id": 1,
+        "name": "Daniel Silva",
+        "email": "daniel.silva@example.com",
+    }
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value.get.return_value = mock_response
+    mock_client_cls.return_value = mock_client
+
+    created = client.post(
+        "/orders",
+        json={"user_id": 1, "item": "Webcam", "quantity": 1},
+        headers=write_headers,
+    ).json()
+
+    r = client.delete(f"/orders/{created['id']}", headers=write_headers)
+    assert r.status_code == 204
+    assert client.get(f"/orders/{created['id']}", headers=read_headers).status_code == 404
+
+
+def test_delete_nonexistent_order_returns_404(write_headers):
+    r = client.delete("/orders/999999", headers=write_headers)
+    assert r.status_code == 404
+
+
+def test_delete_order_with_read_only_scope_returns_403(read_headers):
+    r = client.delete("/orders/1", headers=read_headers)
+    assert r.status_code == 403
+
+
+@patch("app.main.httpx.Client")
+def test_update_order(mock_client_cls, write_headers, read_headers):
+    mock_response = MagicMock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {
+        "id": 1,
+        "name": "Daniel Silva",
+        "email": "daniel.silva@example.com",
+    }
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value.get.return_value = mock_response
+    mock_client_cls.return_value = mock_client
+
+    created = client.post(
+        "/orders",
+        json={"user_id": 1, "item": "Webcam", "quantity": 1},
+        headers=write_headers,
+    ).json()
+
+    r = client.put(f"/orders/{created['id']}", json={"item": "Webcam 4K", "quantity": 3}, headers=write_headers)
+    assert r.status_code == 200
+    assert r.json()["item"] == "Webcam 4K"
+    assert r.json()["quantity"] == 3
+    assert r.json()["user"]["id"] == 1
+
+    assert client.get(f"/orders/{created['id']}", headers=read_headers).json()["quantity"] == 3
+
+
+def test_update_nonexistent_order_returns_404(write_headers):
+    r = client.put("/orders/999999", json={"item": "Rato", "quantity": 1}, headers=write_headers)
+    assert r.status_code == 404
+
+
+def test_update_order_rejects_invalid_quantity(write_headers):
+    r = client.put("/orders/1", json={"item": "Rato", "quantity": 0}, headers=write_headers)
+    assert r.status_code == 422
+
+
+def test_update_order_with_read_only_scope_returns_403(read_headers):
+    r = client.put("/orders/1", json={"item": "Rato", "quantity": 1}, headers=read_headers)
+    assert r.status_code == 403
