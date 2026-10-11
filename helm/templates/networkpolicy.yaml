@@ -104,6 +104,9 @@ spec:
         - podSelector:
             matchLabels:
               app: service-orders
+        - podSelector:
+            matchLabels:
+              app: web
       ports:
         - port: 8002
     - from:
@@ -112,6 +115,14 @@ spec:
               kubernetes.io/metadata.name: observability
       ports:
         - port: 8002
+    {{- if .Values.ingress.enabled }}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.ingress.controllerNamespace }}
+      ports:
+        - port: 8002
+    {{- end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -127,6 +138,12 @@ spec:
   policyTypes:
     - Egress
   egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres-orders
+      ports:
+        - port: 5432
     - to:
         - namespaceSelector:
             matchLabels:
@@ -158,6 +175,59 @@ spec:
         - podSelector:
             matchLabels:
               app: service-orders
+        - podSelector:
+            matchLabels:
+              app: service-users
       ports:
         - port: 5432
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-web-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "projeto-final.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 8080
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-web-egress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "projeto-final.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: web
+  policyTypes:
+    - Egress
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app: service-users
+      ports:
+        - port: 8002
+    - to:
+        - podSelector:
+            matchLabels:
+              app: service-orders
+      ports:
+        - port: 8001
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: auth
+      ports:
+        - port: 8080
 {{- end }}

@@ -1,6 +1,7 @@
 import os
 import time
 
+os.environ.setdefault("DATABASE_URL", "sqlite:///./test_users_unit.db")
 os.environ.setdefault("OIDC_ISSUER", "http://keycloak-test/realms/test")
 os.environ.setdefault("ENABLE_TRACING", "false")
 
@@ -51,6 +52,11 @@ def auth_headers():
 
 
 @pytest.fixture
+def write_headers():
+    return {"Authorization": f"Bearer {_make_token('users:write')}"}
+
+
+@pytest.fixture
 def wrong_scope_headers():
     return {"Authorization": f"Bearer {_make_token('orders:read')}"}
 
@@ -58,3 +64,14 @@ def wrong_scope_headers():
 @pytest.fixture
 def expired_token_headers():
     return {"Authorization": f"Bearer {_make_token('users:read', expires_in=-10)}"}
+
+
+@pytest.fixture(autouse=True)
+def reset_database():
+    from app.db import Base, engine
+    from app.main import seed_users
+
+    Base.metadata.drop_all(bind=engine)
+    Base.metadata.create_all(bind=engine)
+    seed_users()
+    yield

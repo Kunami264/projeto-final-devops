@@ -1,0 +1,4 @@
+# DEV — tudo: runtime de PRD + módulos de teste de STG, para desenvolver e
+# correr os testes unitários localmente. Instalado por `make build-dev`.
+-r requirements-prd.txt
+-r requirements-stg.txt

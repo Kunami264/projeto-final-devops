@@ -1,0 +1,27 @@
+# Expõe APENAS o endpoint de token do Keycloak no ponto de entrada HTTPS de PRD,
+# para o cliente se autenticar sem port-forward. A consola de administração
+# não é exposta. __PRD_HOST__ / __INGRESS_CLASS__ são substituídos por `make run-prd`.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: keycloak-token
+  namespace: auth
+  annotations:
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+spec:
+  ingressClassName: "__INGRESS_CLASS__"
+  tls:
+    - hosts:
+        - "__PRD_HOST__"
+      secretName: projeto-final-tls
+  rules:
+    - host: "__PRD_HOST__"
+      http:
+        paths:
+          - path: /realms/projeto-final/protocol/openid-connect/token
+            pathType: Exact
+            backend:
+              service:
+                name: keycloak
+                port:
+                  number: 8080

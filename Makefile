@@ -2,674 +2,459 @@ SHELL := /bin/bash
 .SHELLFLAGS := -eu -o pipefail -c
 
 # ════════════════════════════════════════════════════════════════════
-# VARIÁVEIS DE CONFIGURAÇÃO
+# VARIÁVEIS DE CONFIGURAÇÃO  (todas podem ser sobrepostas: make X VAR=valor)
 # ════════════════════════════════════════════════════════════════════
 
-PYTHON          := python3.12
-VENV_DIR        := venv
+PYTHON          ?= python3
+VENV_DIR        ?= .venv
 VENV_PY         := $(VENV_DIR)/bin/python
-VENV_PIP        := $(VENV_DIR)/bin/pip
-STAMP           := $(VENV_DIR)/.installed
+STAMP_DEV       := $(VENV_DIR)/.installed-dev
+STAMP_STG       := $(VENV_DIR)/.installed-stg
 
-COMPOSE         := docker compose
-KUBECTL         := sudo snap run microk8s kubectl
+DOCKER          ?= docker
+COMPOSE         ?= docker compose
+MICROK8S        ?= sudo snap run microk8s
+KUBECTL         ?= $(MICROK8S) kubectl
+
+# O Helm não usa o kubectl do MicroK8s: precisa de um kubeconfig próprio. Sem ele
+# tenta http://localhost:8080 — que em DEV é o Keycloak — e falha com
+# "kubernetes cluster unreachable: the server could not find the requested resource".
+# Por isso o Makefile gera o kubeconfig a partir do cluster e passa-o sempre ao Helm.
+KUBECONFIG_FILE ?= kubeconfig-make.yaml
+KUBECONFIG_CMD  ?= $(MICROK8S) config
+HELM            ?= helm --kubeconfig $(KUBECONFIG_FILE)
+
+RELEASE         := projeto-final
+SERVICES        := service-users service-orders web
+
+# Imagens: a mesma imagem construída em STG é promovida (re-tag) para PRD.
+IMAGE_REPO      ?= ghcr.io/kunami264/projeto-final-devops
+STG_TAG         ?= stg
+PRD_TAG         ?= main
 
 # Namespaces Kubernetes
-
 NAMESPACE_STG   := staging
 NAMESPACE_PRD   := production
 NAMESPACE_AUTH  := auth
 NAMESPACE_OBS   := observability
+
+# PRD — ponto de entrada HTTPS (Ingress)
+PRD_HOST        ?= projeto-final.test
+PRD_URL         := https://$(PRD_HOST)
+INGRESS_CLASS   ?= public
+INGRESS_NS      ?= ingress
+TLS_SECRET      := projeto-final-tls
+CERT_DIR        := .certs
+
+# Credenciais de demonstração (definidas em k8s/auth/realm-export.json)
+DEMO_USERNAME   ?= admin
+DEMO_PASSWORD   ?= admin
+TOKEN_PATH      := /realms/projeto-final/protocol/openid-connect/token
 
 # ════════════════════════════════════════════════════════════════════
 # PORTAS / URLS
 # ════════════════════════════════════════════════════════════════════
 
 # DEV — Docker Compose
+DEV_WEB_URL         := http://localhost:8000
+DEV_USERS_URL       := http://localhost:8002
+DEV_ORDERS_URL      := http://localhost:8001
+DEV_KEYCLOAK_URL    := http://localhost:8080
+DEV_JAEGER_URL      := http://localhost:16686
+DEV_PROMETHEUS_URL  := http://localhost:9090
+DEV_GRAFANA_URL     := http://localhost:3000
 
-DEV_USERS_PORT      := 8002
-DEV_ORDERS_PORT     := 8001
-DEV_KEYCLOAK_PORT   := 8080
-DEV_JAEGER_PORT     := 16686
-DEV_PROMETHEUS_PORT := 9090
-DEV_GRAFANA_PORT    := 3000
-
-DEV_USERS_URL       := http://localhost:$(DEV_USERS_PORT)
-DEV_ORDERS_URL      := http://localhost:$(DEV_ORDERS_PORT)
-DEV_KEYCLOAK_URL    := http://localhost:$(DEV_KEYCLOAK_PORT)
-DEV_JAEGER_URL      := http://localhost:$(DEV_JAEGER_PORT)
-DEV_PROMETHEUS_URL  := http://localhost:$(DEV_PROMETHEUS_PORT)
-DEV_GRAFANA_URL     := http://localhost:$(DEV_GRAFANA_PORT)
-
-# STG — MicroK8s
-
+# STG — MicroK8s (port-forward; portas diferentes das de DEV para coexistirem)
+STG_WEB_PORT            := 8100
 STG_USERS_PORT          := 8102
 STG_ORDERS_PORT         := 8101
 STG_KEYCLOAK_PORT       := 8180
 STG_KEYCLOAK_MGMT_PORT  := 8190
+STG_PORTS               := $(STG_WEB_PORT) $(STG_USERS_PORT) $(STG_ORDERS_PORT) $(STG_KEYCLOAK_PORT) $(STG_KEYCLOAK_MGMT_PORT)
 
+STG_WEB_URL             := http://localhost:$(STG_WEB_PORT)
 STG_USERS_URL           := http://localhost:$(STG_USERS_PORT)
 STG_ORDERS_URL          := http://localhost:$(STG_ORDERS_PORT)
 STG_KEYCLOAK_URL        := http://localhost:$(STG_KEYCLOAK_PORT)
 STG_KEYCLOAK_MGMT_URL   := http://localhost:$(STG_KEYCLOAK_MGMT_PORT)
 
-# PRD — MicroK8s
-
-PRD_USERS_PORT          := 8202
-PRD_ORDERS_PORT         := 8201
-PRD_KEYCLOAK_PORT       := 8280
-PRD_KEYCLOAK_MGMT_PORT  := 8290
-
-PRD_USERS_URL           := http://localhost:$(PRD_USERS_PORT)
-PRD_ORDERS_URL          := http://localhost:$(PRD_ORDERS_PORT)
-PRD_KEYCLOAK_URL        := http://localhost:$(PRD_KEYCLOAK_PORT)
-PRD_KEYCLOAK_MGMT_URL   := http://localhost:$(PRD_KEYCLOAK_MGMT_PORT)
-
-# Kubernetes Observability
-#
-# Estes ports são diferentes dos utilizados pelo Docker Compose DEV.
-#
-# DEV:
-#   Jaeger       16686
-#   Prometheus    9090
-#   Grafana       3000
-#
-# Kubernetes:
-#   Jaeger       17686
-#   Prometheus    9190
-#   Grafana       3100
-
+# Observabilidade e Keycloak no cluster (partilhados por STG e PRD)
 OBS_JAEGER_PORT       := 17686
 OBS_PROMETHEUS_PORT   := 9190
 OBS_GRAFANA_PORT      := 3100
+OBS_KEYCLOAK_PORT     := 8280
+OBS_PORTS             := $(OBS_JAEGER_PORT) $(OBS_PROMETHEUS_PORT) $(OBS_GRAFANA_PORT) $(OBS_KEYCLOAK_PORT)
 
-OBS_JAEGER_URL        := http://localhost:$(OBS_JAEGER_PORT)
-OBS_PROMETHEUS_URL    := http://localhost:$(OBS_PROMETHEUS_PORT)
-OBS_GRAFANA_URL       := http://localhost:$(OBS_GRAFANA_PORT)
+# ════════════════════════════════════════════════════════════════════
+# FUNÇÕES AUXILIARES
+# ════════════════════════════════════════════════════════════════════
+
+# $(call kill_ports,<portas>) — termina port-forwards presos a essas portas
+kill_ports = { fuser -k $(foreach p,$(1),$(p)/tcp); sudo fuser -k $(foreach p,$(1),$(p)/tcp); } >/dev/null 2>&1 || true
+# $(call forward,<namespace>,<service>,<porta local>,<porta do service>)
+forward = $(KUBECTL) port-forward -n $(1) svc/$(2) $(3):$(4) >/dev/null 2>&1 &
+# $(call image,<service>,<tag>)
+image = $(IMAGE_REPO)/$(1):$(2)
 
 .DEFAULT_GOAL := help
 
-.PHONY: \
-	help \
-	venv \
-	install \
-	clean \
-	destroy \
-	up \
-	down \
-	restart \
-	logs \
-	test-unit \
-	helm-lint \
-	helm-template-staging \
-	helm-install-staging \
-	wait-stg-healthy \
-	test-integration-stg \
-	monitor-stg \
-	validate-dev \
-	helm-template-production \
-	helm-install-production \
-	wait-prd-healthy \
-	test-smoke-prd \
-	monitor-prd \
-	validate-prd \
-	k8s-auth-apply \
-	k8s-observability-apply \
-	observability-stg \
-	observability-prd \
-	validate-all
+.PHONY: help \
+	build-dev run-dev test-dev demo-dev token-dev info-dev logs-dev stop-dev clean-dev \
+	build-stg run-stg test-stg demo-stg forward-stg info-stg stop-stg clean-stg \
+	build-prd push-prd tls-prd run-prd status-prd info-prd stop-prd clean-prd \
+	kubeconfig run-infra forward-infra clean-infra \
+	lint clean
 
 # ════════════════════════════════════════════════════════════════════
 # HELP
 # ════════════════════════════════════════════════════════════════════
 
 help: ## Lista todos os comandos disponíveis
+	@echo ""
+	@echo "Fluxo:  build-dev → run-dev → test-dev   |   build-stg → run-stg → test-stg   |   build-prd → run-prd"
+	@echo ""
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
-	awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-32s\033[0m %s\n", $$1, $$2}'
+	awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
 # ════════════════════════════════════════════════════════════════════
-# PYTHON / VENV
+# PYTHON — ambiente virtual (python -m venv .venv)
 # ════════════════════════════════════════════════════════════════════
 
-venv: ## Cria o ambiente virtual Python
-	@echo "===== [PYTHON] A criar ambiente virtual ====="
+$(VENV_PY):
+	@echo "===== [PYTHON] A criar ambiente virtual em $(VENV_DIR) ====="
 	$(PYTHON) -m venv $(VENV_DIR)
+	$(VENV_PY) -m pip install --quiet --upgrade pip
 
-$(STAMP): requirements.txt | venv
-	@echo "===== [PYTHON] A instalar dependências ====="
-	$(VENV_PIP) install --quiet --upgrade pip
-	$(VENV_PIP) install --quiet -r requirements.txt
-	@touch $(STAMP)
+$(STAMP_DEV): requirements-dev.txt requirements-stg.txt requirements-prd.txt $(wildcard service-*/requirements*.txt) | $(VENV_PY)
+	@echo "===== [PYTHON] A instalar requirements-dev.txt ====="
+	$(VENV_PY) -m pip install --quiet -r requirements-dev.txt
+	@touch $@
 
-install: $(STAMP) ## Instala o ambiente Python e dependências
-	@echo "===== [PYTHON] Ambiente virtual pronto ====="
+$(STAMP_STG): requirements-stg.txt | $(VENV_PY)
+	@echo "===== [PYTHON] A instalar requirements-stg.txt ====="
+	$(VENV_PY) -m pip install --quiet -r requirements-stg.txt
+	@touch $@
+
+# ════════════════════════════════════════════════════════════════════
+# KUBERNETES — acesso do Helm ao cluster
+# ════════════════════════════════════════════════════════════════════
+
+kubeconfig: ## [K8S] Gera o kubeconfig que o Helm usa para falar com o cluster
+	@umask 077; \
+	if $(KUBECONFIG_CMD) > $(KUBECONFIG_FILE).tmp 2>/dev/null && [ -s $(KUBECONFIG_FILE).tmp ]; then \
+		mv $(KUBECONFIG_FILE).tmp $(KUBECONFIG_FILE); \
+	else \
+		rm -f $(KUBECONFIG_FILE).tmp; \
+		echo "✗ Não foi possível obter o kubeconfig do cluster ($(KUBECONFIG_CMD))."; \
+		echo "  O MicroK8s está instalado e a correr?  sudo snap start microk8s && sudo microk8s status --wait-ready"; \
+		exit 1; \
+	fi
 
 # ════════════════════════════════════════════════════════════════════
 # DEV — Docker Compose
 # ════════════════════════════════════════════════════════════════════
 
-up: ## [DEV] Sobe os serviços locais com Docker Compose
+build-dev: $(STAMP_DEV) ## [DEV] Cria o .venv (requirements-dev.txt) e constrói as imagens Docker
+	@echo "===== [DEV] A construir imagens ====="
+	$(COMPOSE) build
+	@echo "===== [DEV] Build concluído ✅  (seguinte: make run-dev) ====="
+
+run-dev: ## [DEV] Sobe o ambiente local com Docker Compose
 	@echo "===== [DEV] A iniciar Docker Compose ====="
-	$(COMPOSE) up -d --build
+	$(COMPOSE) up -d --wait
+	@$(MAKE) --no-print-directory info-dev
+
+info-dev: ## [DEV] Mostra endereços e credenciais do ambiente local
 	@echo ""
-	@echo ">> [DEV] Serviços disponíveis:"
-	@echo "   - service-users    -> $(DEV_USERS_URL)/health"
-	@echo "   - service-orders   -> $(DEV_ORDERS_URL)/health"
-	@echo "   - Keycloak         -> $(DEV_KEYCLOAK_URL)"
-	@echo "   - Jaeger           -> $(DEV_JAEGER_URL)"
-	@echo "   - Prometheus       -> $(DEV_PROMETHEUS_URL)"
-	@echo "   - Grafana          -> $(DEV_GRAFANA_URL)"
+	@echo "===== [DEV] Endereços e credenciais ====="
+	@echo "  BACKOFFICE (aplicação)      $(DEV_WEB_URL)       $(DEMO_USERNAME) / $(DEMO_PASSWORD)"
+	@echo "  API utilizadores (Swagger)  $(DEV_USERS_URL)/docs  token: make token-dev"
+	@echo "  API encomendas   (Swagger)  $(DEV_ORDERS_URL)/docs  token: make token-dev"
+	@echo "  Keycloak (consola admin)    $(DEV_KEYCLOAK_URL)       admin / admin"
+	@echo "  Grafana                     $(DEV_GRAFANA_URL)       admin / admin"
+	@echo "  Prometheus                  $(DEV_PROMETHEUS_URL)       sem login"
+	@echo "  Jaeger                      $(DEV_JAEGER_URL)      sem login"
+	@echo ""
+	@echo "  Criar/editar/apagar clientes e encomendas: no site, ou make demo-dev (README, secção 7)"
+	@echo ""
 
-down: ## [DEV] Para e remove os containers Docker Compose
-	@echo "===== [DEV] A parar Docker Compose ====="
-	$(COMPOSE) down -v
+test-dev: $(STAMP_DEV) ## [DEV] Executa os testes unitários
+	@echo "===== [DEV] Testes unitários — service-users ====="
+	cd service-users && ../$(VENV_PY) -m pytest tests/ -v
+	@echo "===== [DEV] Testes unitários — service-orders ====="
+	cd service-orders && ../$(VENV_PY) -m pytest tests/ -v
 
-restart: down up ## [DEV] Reinicia os serviços Docker Compose
+demo-dev: ## [DEV] Cria, edita e apaga um utilizador e uma encomenda (ciclo completo)
+	@USERS_URL=$(DEV_USERS_URL) ORDERS_URL=$(DEV_ORDERS_URL) KEYCLOAK_BASE_URL=$(DEV_KEYCLOAK_URL) \
+		$(PYTHON) scripts/demo.py --username '$(DEMO_USERNAME)' --password '$(DEMO_PASSWORD)'
 
-logs: ## [DEV] Acompanha os logs dos containers
+token-dev: $(STAMP_DEV) ## [DEV] Imprime um token de acesso (para o Swagger ou curl)
+	@$(VENV_PY) scripts/get_token.py --grant password \
+		--token-url $(DEV_KEYCLOAK_URL)$(TOKEN_PATH) \
+		--username '$(DEMO_USERNAME)' --password '$(DEMO_PASSWORD)'
+
+logs-dev: ## [DEV] Acompanha os logs dos containers
 	$(COMPOSE) logs -f
 
-validate-dev: install up test-unit ## [DEV] Valida ambiente de desenvolvimento
+stop-dev: ## [DEV] Para os containers (mantém dados e imagens)
+	@echo "===== [DEV] A parar Docker Compose ====="
+	$(COMPOSE) down
+
+clean-dev: ## [DEV] Remove containers, volumes, imagens construídas, .venv e temporários
+	@echo "===== [CLEAN DEV] Containers, volumes, rede e imagens locais ====="
+	-$(COMPOSE) down --volumes --rmi local --remove-orphans
+	@echo "===== [CLEAN DEV] Ambiente virtual e ficheiros temporários ====="
+	rm -rf $(VENV_DIR) venv .pytest_cache .coverage htmlcov
+	find . -type d \( -name "__pycache__" -o -name ".pytest_cache" \) -prune -exec rm -rf {} +
+	find . -type f \( -name "*.pyc" -o -name "*.pid" -o -name "*.log" -o -name "*.db" \) -not -path "./.git/*" -delete
+	@echo "===== [CLEAN DEV] Concluído ✅ ====="
+
+# ════════════════════════════════════════════════════════════════════
+# INFRAESTRUTURA PARTILHADA NO CLUSTER — Keycloak + Observabilidade
+# (usada por STG e PRD; aplicada automaticamente por run-stg / run-prd)
+# ════════════════════════════════════════════════════════════════════
+
+run-infra: ## [K8S] Aplica Keycloak, Prometheus, Grafana e Jaeger no cluster
+	@echo "===== [K8S] Keycloak (namespace $(NAMESPACE_AUTH)) ====="
+	$(KUBECTL) apply -f k8s/auth/keycloak.yaml -f k8s/auth/networkpolicy.yaml
+	@echo "===== [K8S] Observabilidade (namespace $(NAMESPACE_OBS)) ====="
+	$(KUBECTL) apply \
+		-f k8s/observability/jaeger.yaml \
+		-f k8s/observability/networkpolicy.yaml \
+		-f k8s/observability/prometheus.yaml \
+		-f k8s/observability/grafana.yaml
+	@echo "===== [K8S] A aguardar que fiquem prontos ====="
+	$(KUBECTL) rollout status deployment/keycloak   -n $(NAMESPACE_AUTH) --timeout=300s
+	$(KUBECTL) rollout status deployment/jaeger     -n $(NAMESPACE_OBS)  --timeout=180s
+	$(KUBECTL) rollout status deployment/prometheus -n $(NAMESPACE_OBS)  --timeout=180s
+	$(KUBECTL) rollout status deployment/grafana    -n $(NAMESPACE_OBS)  --timeout=180s
+
+forward-infra: ## [K8S] Port-forward de Grafana, Prometheus, Jaeger e Keycloak (STG/PRD)
 	@echo ""
-	@echo "===== [DEV] ✅ VALIDAÇÃO PASSOU ✅ ====="
+	@echo "===== [K8S] Observabilidade e Keycloak do cluster ====="
+	@echo "  Grafana                   http://localhost:$(OBS_GRAFANA_PORT)      admin / admin"
+	@echo "  Prometheus                http://localhost:$(OBS_PROMETHEUS_PORT)      sem login"
+	@echo "  Jaeger                    http://localhost:$(OBS_JAEGER_PORT)     sem login"
+	@echo "  Keycloak (consola admin)  http://localhost:$(OBS_KEYCLOAK_PORT)      admin / admin"
+	@echo "  Ctrl+C para sair."
+	@echo ""
+	@$(call kill_ports,$(OBS_PORTS)); \
+	trap '$(call kill_ports,$(OBS_PORTS))' EXIT INT TERM; \
+	$(call forward,$(NAMESPACE_OBS),grafana,$(OBS_GRAFANA_PORT),3000) \
+	$(call forward,$(NAMESPACE_OBS),prometheus,$(OBS_PROMETHEUS_PORT),9090) \
+	$(call forward,$(NAMESPACE_OBS),jaeger,$(OBS_JAEGER_PORT),16686) \
+	$(call forward,$(NAMESPACE_AUTH),keycloak,$(OBS_KEYCLOAK_PORT),8080) \
+	wait
+
+clean-infra: ## [K8S] Remove Keycloak e observabilidade (namespaces, PVCs, RBAC de cluster)
+	@echo "===== [CLEAN K8S] Namespaces $(NAMESPACE_AUTH) e $(NAMESPACE_OBS) (inclui PVCs e Secrets) ====="
+	-$(KUBECTL) delete namespace $(NAMESPACE_AUTH) $(NAMESPACE_OBS) --ignore-not-found --wait=true --timeout=180s
+	@echo "===== [CLEAN K8S] Recursos de cluster do Prometheus ====="
+	-$(KUBECTL) delete clusterrolebinding prometheus-scraper --ignore-not-found
+	-$(KUBECTL) delete clusterrole prometheus-scraper --ignore-not-found
 
 # ════════════════════════════════════════════════════════════════════
-# AUTENTICAÇÃO — KEYCLOAK
+# STG — MicroK8s + Helm  (ambiente onde se testa antes de promover para PRD)
 # ════════════════════════════════════════════════════════════════════
 
-k8s-auth-apply: ## [AUTH] Aplica o Keycloak no cluster
-	@echo "===== [AUTH] A garantir namespace ====="
-
-	$(KUBECTL) create namespace $(NAMESPACE_AUTH) \
-		--dry-run=client -o yaml | \
-		$(KUBECTL) apply -f -
-
-	$(KUBECTL) label namespace $(NAMESPACE_AUTH) \
-		kubernetes.io/metadata.name=$(NAMESPACE_AUTH) \
-		--overwrite
-
-	@echo "===== [AUTH] A aplicar manifests do Keycloak ====="
-
-	@for f in k8s/auth/*.yaml k8s/auth/*.yml; do \
-		if [ -f "$$f" ]; then \
-			$(KUBECTL) apply -f "$$f"; \
-		fi; \
+build-stg: $(STAMP_STG) ## [STG] Constrói as imagens com os pacotes de PRD, carrega-as no MicroK8s e instala requirements-stg.txt
+	@for svc in $(SERVICES); do \
+		echo "===== [STG] A construir $(IMAGE_REPO)/$$svc:$(STG_TAG) ====="; \
+		$(DOCKER) build -t $(IMAGE_REPO)/$$svc:$(STG_TAG) ./$$svc; \
+		echo "===== [STG] A carregar a imagem no MicroK8s ====="; \
+		$(DOCKER) save $(IMAGE_REPO)/$$svc:$(STG_TAG) | $(MICROK8S) ctr image import -; \
 	done
+	$(HELM) lint ./helm -f ./helm/values-staging.yaml
+	@echo "===== [STG] Build concluído ✅  (seguinte: make run-stg) ====="
 
-	@echo "===== [AUTH] A aguardar Keycloak ====="
-
-	$(KUBECTL) rollout status \
-		deployment/keycloak \
-		-n $(NAMESPACE_AUTH) \
-		--timeout=180s
-
-	@echo "===== [AUTH] Keycloak pronto ✅ ====="
-
-# ════════════════════════════════════════════════════════════════════
-# OBSERVABILIDADE — KUBERNETES
-# ════════════════════════════════════════════════════════════════════
-
-k8s-observability-apply: ## [OBS] Aplica Prometheus, Grafana e Jaeger
-	@echo "===== [OBS] A garantir namespace ====="
-
-	$(KUBECTL) create namespace $(NAMESPACE_OBS) \
-		--dry-run=client -o yaml | \
-		$(KUBECTL) apply -f -
-
-	$(KUBECTL) label namespace $(NAMESPACE_OBS) \
-		kubernetes.io/metadata.name=$(NAMESPACE_OBS) \
-		--overwrite
-
-	@echo "===== [OBS] A aplicar Grafana ====="
-	$(KUBECTL) apply -f k8s/observability/grafana.yaml
-
-	@echo "===== [OBS] A aplicar Jaeger ====="
-	$(KUBECTL) apply -f k8s/observability/jaeger.yaml
-
-	@echo "===== [OBS] A aplicar NetworkPolicy ====="
-	$(KUBECTL) apply -f k8s/observability/networkpolicy.yaml
-
-	@echo "===== [OBS] A aplicar Prometheus ====="
-	$(KUBECTL) apply -f k8s/observability/prometheus.yaml
-
-	@echo "===== [OBS] A aguardar Prometheus ====="
-	$(KUBECTL) rollout status \
-		deployment/prometheus \
-		-n $(NAMESPACE_OBS) \
-		--timeout=180s
-
-	@echo "===== [OBS] A aguardar Grafana ====="
-	$(KUBECTL) rollout status \
-		deployment/grafana \
-		-n $(NAMESPACE_OBS) \
-		--timeout=180s
-
-	@echo "===== [OBS] Stack pronta ✅ ====="
-	$(KUBECTL) get pods,svc -n $(NAMESPACE_OBS)
-
-
-# ════════════════════════════════════════════════════════════════════
-# STG — MicroK8s
-# ════════════════════════════════════════════════════════════════════
-
-helm-template-staging: ## [STG] Renderiza os templates Helm
-	@echo "===== [STG] Helm template ====="
-	helm template projeto-final \
-		./helm \
-		-n $(NAMESPACE_STG) \
-		-f ./helm/values-staging.yaml
-
-helm-install-staging: ## [STG] Instala/Atualiza a release Helm
-	@echo "===== [STG] A garantir namespace ====="
-	$(KUBECTL) create namespace $(NAMESPACE_STG) \
-		--dry-run=client -o yaml | \
-		$(KUBECTL) apply -f -
-
-	@echo "===== [STG] A fazer deploy via Helm ====="
-	helm upgrade --install projeto-final \
-		./helm \
-		-n $(NAMESPACE_STG) \
-		--create-namespace \
-		-f ./helm/values-staging.yaml
-
-wait-stg-healthy: ## [STG] Aguarda os deployments
-	@echo "===== [STG] A aguardar workloads ====="
-
-	$(KUBECTL) rollout status \
-		deployment/postgres-orders \
-		-n $(NAMESPACE_STG) \
-		--timeout=120s
-
-	$(KUBECTL) rollout status \
-		deployment/service-users \
-		-n $(NAMESPACE_STG) \
-		--timeout=120s
-
-	$(KUBECTL) rollout status \
-		deployment/service-orders \
-		-n $(NAMESPACE_STG) \
-		--timeout=120s
-
-	@echo "===== [STG] Workloads prontos ✅ ====="
+run-stg: kubeconfig run-infra ## [STG] Faz o deploy em Staging (Helm) e aguarda os workloads
+	@echo "===== [STG] Deploy via Helm ====="
+	$(HELM) upgrade --install $(RELEASE) ./helm \
+		-n $(NAMESPACE_STG) --create-namespace \
+		-f ./helm/values-staging.yaml \
+		--set image.tag=$(STG_TAG) \
+		--wait --timeout 5m
 	$(KUBECTL) get pods,svc -n $(NAMESPACE_STG)
+	@$(MAKE) --no-print-directory info-stg
 
-test-integration-stg: install ## [STG] Executa testes de integração
-	@echo "===== [STG] A limpar port-forwards antigos ====="
+info-stg: ## [STG] Mostra como aceder ao ambiente de Staging
+	@echo ""
+	@echo "===== [STG] Staging pronto ✅ ====="
+	@echo "  Validar o ambiente (integração + smoke)   make test-stg"
+	@echo "  Criar/editar/apagar utilizadores e encomendas    make demo-stg"
+	@echo "  Backoffice e APIs (port-forward)          make forward-stg"
+	@echo "  Grafana / Prometheus / Jaeger / Keycloak  make forward-infra"
+	@echo ""
 
-	@-sudo fuser -k \
-		$(STG_USERS_PORT)/tcp \
-		$(STG_ORDERS_PORT)/tcp \
-		$(STG_KEYCLOAK_PORT)/tcp \
-		$(STG_KEYCLOAK_MGMT_PORT)/tcp \
-		>/dev/null 2>&1 || true
-
-	@rm -f \
-		users_stg_pf.log \
-		orders_stg_pf.log \
-		keycloak_stg_pf.log \
-		keycloak_mgmt_stg_pf.log
-
-	@echo "===== [STG] A iniciar port-forwards ====="
-
-	@$(KUBECTL) port-forward \
-		-n $(NAMESPACE_STG) \
-		svc/service-users \
-		$(STG_USERS_PORT):8002 \
-		>users_stg_pf.log 2>&1 &
-
-	@$(KUBECTL) port-forward \
-		-n $(NAMESPACE_STG) \
-		svc/service-orders \
-		$(STG_ORDERS_PORT):8001 \
-		>orders_stg_pf.log 2>&1 &
-
-	@$(KUBECTL) port-forward \
-		-n $(NAMESPACE_AUTH) \
-		svc/keycloak \
-		$(STG_KEYCLOAK_PORT):8080 \
-		>keycloak_stg_pf.log 2>&1 &
-
-	@$(KUBECTL) port-forward \
-		-n $(NAMESPACE_AUTH) \
-		svc/keycloak \
-		$(STG_KEYCLOAK_MGMT_PORT):9000 \
-		>keycloak_mgmt_stg_pf.log 2>&1 &
-
-	@sleep 5
-
-	@echo "===== [STG] A executar testes de integração ====="
-
-	@USERS_URL=$(STG_USERS_URL) \
+test-stg: $(STAMP_STG) ## [STG] Testes de integração + smoke — validam Staging antes de promover para PRD
+	@echo "===== [STG] A abrir port-forwards e a executar os testes ====="
+	@$(call kill_ports,$(STG_PORTS)); \
+	trap '$(call kill_ports,$(STG_PORTS))' EXIT; \
+	$(call forward,$(NAMESPACE_STG),service-users,$(STG_USERS_PORT),8002) \
+	$(call forward,$(NAMESPACE_STG),service-orders,$(STG_ORDERS_PORT),8001) \
+	$(call forward,$(NAMESPACE_AUTH),keycloak,$(STG_KEYCLOAK_PORT),8080) \
+	$(call forward,$(NAMESPACE_AUTH),keycloak,$(STG_KEYCLOAK_MGMT_PORT),9000) \
+	$(call forward,$(NAMESPACE_STG),web,$(STG_WEB_PORT),8080) \
+	sleep 5; \
+	WEB_URL=$(STG_WEB_URL) \
+	USERS_URL=$(STG_USERS_URL) \
 	ORDERS_URL=$(STG_ORDERS_URL) \
 	KEYCLOAK_BASE_URL=$(STG_KEYCLOAK_URL) \
 	KEYCLOAK_MGMT_URL=$(STG_KEYCLOAK_MGMT_URL) \
-	$(VENV_PY) -m pytest tests/integration/ -v -m integration
+	$(VENV_PY) -m pytest tests/integration/ tests/smoke/ -v
+	@echo "===== [STG] ✅ Staging validado — pode promover para PRD (make build-prd) ====="
 
-	@echo "===== [STG] A terminar port-forwards ====="
+demo-stg: ## [STG] Cria, edita e apaga um utilizador e uma encomenda em Staging
+	@$(call kill_ports,$(STG_PORTS)); \
+	trap '$(call kill_ports,$(STG_PORTS))' EXIT; \
+	$(call forward,$(NAMESPACE_STG),service-users,$(STG_USERS_PORT),8002) \
+	$(call forward,$(NAMESPACE_STG),service-orders,$(STG_ORDERS_PORT),8001) \
+	$(call forward,$(NAMESPACE_AUTH),keycloak,$(STG_KEYCLOAK_PORT),8080) \
+	sleep 5; \
+	USERS_URL=$(STG_USERS_URL) ORDERS_URL=$(STG_ORDERS_URL) KEYCLOAK_BASE_URL=$(STG_KEYCLOAK_URL) \
+	$(PYTHON) scripts/demo.py --username '$(DEMO_USERNAME)' --password '$(DEMO_PASSWORD)'
 
-	@-sudo fuser -k \
-		$(STG_USERS_PORT)/tcp \
-		$(STG_ORDERS_PORT)/tcp \
-		$(STG_KEYCLOAK_PORT)/tcp \
-		$(STG_KEYCLOAK_MGMT_PORT)/tcp \
-		>/dev/null 2>&1 || true
-
-	@rm -f \
-		users_stg_pf.log \
-		orders_stg_pf.log \
-		keycloak_stg_pf.log \
-		keycloak_mgmt_stg_pf.log
-
-observability-stg: ## [OBS] Acede à observabilidade Kubernetes
-	@echo "===== [OBS] Observabilidade Kubernetes ====="
-	@echo ""
-	@echo ">> Jaeger      -> $(OBS_JAEGER_URL)"
-	@echo ">> Prometheus  -> $(OBS_PROMETHEUS_URL)"
-	@echo ">> Grafana     -> $(OBS_GRAFANA_URL)"
-	@echo ""
-	@echo ">> Ctrl+C para sair."
-	@echo ""
-
-	@-sudo fuser -k \
-		$(OBS_JAEGER_PORT)/tcp \
-		$(OBS_PROMETHEUS_PORT)/tcp \
-		$(OBS_GRAFANA_PORT)/tcp \
-		>/dev/null 2>&1 || true
-
-	@trap 'sudo fuser -k \
-		$(OBS_JAEGER_PORT)/tcp \
-		$(OBS_PROMETHEUS_PORT)/tcp \
-		$(OBS_GRAFANA_PORT)/tcp \
-		>/dev/null 2>&1 || true' EXIT INT TERM; \
-	$(KUBECTL) port-forward \
-		-n $(NAMESPACE_OBS) \
-		svc/jaeger \
-		$(OBS_JAEGER_PORT):16686 & \
-	$(KUBECTL) port-forward \
-		-n $(NAMESPACE_OBS) \
-		svc/prometheus \
-		$(OBS_PROMETHEUS_PORT):9090 & \
-	$(KUBECTL) port-forward \
-		-n $(NAMESPACE_OBS) \
-		svc/grafana \
-		$(OBS_GRAFANA_PORT):3000 & \
-	wait
-
-monitor-stg: ## [STG] Port-forward das aplicações
-	@echo "===== [STG] A limpar portas anteriores ====="
-
-	@-sudo fuser -k \
-		$(STG_USERS_PORT)/tcp \
-		$(STG_ORDERS_PORT)/tcp \
-		>/dev/null 2>&1 || true
-
+forward-stg: ## [STG] Port-forward das APIs e do Keycloak de Staging (uso manual)
 	@echo ""
 	@echo "===== [STG] Port-forward ativo ====="
-	@echo ">> service-users  -> $(STG_USERS_URL)"
-	@echo ">> service-orders -> $(STG_ORDERS_URL)"
-	@echo ">> Ctrl+C para sair."
+	@echo "  BACKOFFICE (aplicação)      $(STG_WEB_URL)       $(DEMO_USERNAME) / $(DEMO_PASSWORD)"
+	@echo "  API utilizadores (Swagger)  $(STG_USERS_URL)/docs"
+	@echo "  API encomendas   (Swagger)  $(STG_ORDERS_URL)/docs"
+	@echo "  Keycloak (token)            $(STG_KEYCLOAK_URL)$(TOKEN_PATH)"
+	@echo "  Ctrl+C para sair."
 	@echo ""
-
-	@trap 'sudo fuser -k \
-		$(STG_USERS_PORT)/tcp \
-		$(STG_ORDERS_PORT)/tcp \
-		>/dev/null 2>&1 || true' EXIT INT TERM; \
-	$(KUBECTL) port-forward \
-		-n $(NAMESPACE_STG) \
-		svc/service-users \
-		$(STG_USERS_PORT):8002 & \
-	$(KUBECTL) port-forward \
-		-n $(NAMESPACE_STG) \
-		svc/service-orders \
-		$(STG_ORDERS_PORT):8001 & \
+	@$(call kill_ports,$(STG_PORTS)); \
+	trap '$(call kill_ports,$(STG_PORTS))' EXIT INT TERM; \
+	$(call forward,$(NAMESPACE_STG),web,$(STG_WEB_PORT),8080) \
+	$(call forward,$(NAMESPACE_STG),service-users,$(STG_USERS_PORT),8002) \
+	$(call forward,$(NAMESPACE_STG),service-orders,$(STG_ORDERS_PORT),8001) \
+	$(call forward,$(NAMESPACE_AUTH),keycloak,$(STG_KEYCLOAK_PORT),8080) \
 	wait
 
-validate-stg: helm-template-staging helm-install-staging wait-stg-healthy test-integration-stg ## [STG] Valida Staging
-	@echo ""
-	@echo "===== [STG] ✅ VALIDAÇÃO PASSOU ✅ ====="
+stop-stg: ## [STG] Remove a release de Staging (mantém namespace, imagens e infraestrutura)
+	-@$(MAKE) --no-print-directory kubeconfig
+	-$(HELM) uninstall $(RELEASE) -n $(NAMESPACE_STG) --wait
+
+clean-stg: ## [STG] Remove release, namespace (PVCs, Secrets) e imagens de Staging
+	@echo "===== [CLEAN STG] Release Helm e namespace $(NAMESPACE_STG) ====="
+	-@$(MAKE) --no-print-directory kubeconfig
+	-$(HELM) uninstall $(RELEASE) -n $(NAMESPACE_STG) --wait
+	-$(KUBECTL) delete namespace $(NAMESPACE_STG) --ignore-not-found --wait=true --timeout=180s
+	@echo "===== [CLEAN STG] Imagens (MicroK8s e Docker) ====="
+	@for svc in $(SERVICES); do \
+		$(MICROK8S) ctr image rm $(IMAGE_REPO)/$$svc:$(STG_TAG) >/dev/null 2>&1 || true; \
+		$(DOCKER) image rm -f $(IMAGE_REPO)/$$svc:$(STG_TAG) >/dev/null 2>&1 || true; \
+	done
+	@$(call kill_ports,$(STG_PORTS))
 
 # ════════════════════════════════════════════════════════════════════
-# PRD — MicroK8s
-# ════════════════════════════════════════════════════════════════════
-helm-template-production: ## [PRD] Renderiza os templates Helm
-	@echo "===== [PRD] Helm template ====="
-	helm template projeto-final \
-		./helm \
-		-n $(NAMESPACE_PRD) \
-		-f ./helm/values-production.yaml
-
-helm-install-production: ## [PRD] Instala/Atualiza a release Helm
-	@echo "===== [PRD] A garantir namespace ====="
-	$(KUBECTL) create namespace $(NAMESPACE_PRD) \
-		--dry-run=client -o yaml | \
-		$(KUBECTL) apply -f -
-
-	@echo "===== [PRD] A fazer deploy via Helm ====="
-	helm upgrade --install projeto-final \
-		./helm \
-		-n $(NAMESPACE_PRD) \
-		--create-namespace \
-		-f ./helm/values-production.yaml
-
-wait-prd-healthy: ## [PRD] Aguarda os deployments
-	@echo "===== [PRD] A aguardar workloads ====="
-
-	$(KUBECTL) rollout status \
-		deployment/postgres-orders \
-		-n $(NAMESPACE_PRD) \
-		--timeout=120s
-
-	$(KUBECTL) rollout status \
-		deployment/service-users \
-		-n $(NAMESPACE_PRD) \
-		--timeout=120s
-
-	$(KUBECTL) rollout status \
-		deployment/service-orders \
-		-n $(NAMESPACE_PRD) \
-		--timeout=120s
-
-	@echo "===== [PRD] Workloads prontos ✅ ====="
-	$(KUBECTL) get pods,svc,hpa -n $(NAMESPACE_PRD)
-
-test-smoke-prd: install ## [PRD] Executa smoke tests
-	@echo "===== [PRD] A limpar port-forwards antigos ====="
-
-	@-sudo fuser -k \
-		$(PRD_USERS_PORT)/tcp \
-		$(PRD_ORDERS_PORT)/tcp \
-		>/dev/null 2>&1 || true
-
-	@rm -f \
-		users_prd_pf.log \
-		orders_prd_pf.log \
-		users_prd_pf.pid \
-		orders_prd_pf.pid
-
-	@echo "===== [PRD] A iniciar port-forwards ====="
-
-	@$(KUBECTL) port-forward \
-		-n $(NAMESPACE_PRD) \
-		svc/service-users \
-		$(PRD_USERS_PORT):8002 \
-		>users_prd_pf.log 2>&1 & \
-	echo $$! > users_prd_pf.pid
-
-	@$(KUBECTL) port-forward \
-		-n $(NAMESPACE_PRD) \
-		svc/service-orders \
-		$(PRD_ORDERS_PORT):8001 \
-		>orders_prd_pf.log 2>&1 & \
-	echo $$! > orders_prd_pf.pid
-
-	@sleep 5
-
-	@echo "===== [PRD] A executar smoke tests ====="
-
-	@USERS_URL=$(PRD_USERS_URL) \
-	ORDERS_URL=$(PRD_ORDERS_URL) \
-	$(VENV_PY) -m pytest tests/smoke/ -v
-
-	@echo "===== [PRD] A terminar port-forwards ====="
-
-	@-kill $$(cat users_prd_pf.pid orders_prd_pf.pid 2>/dev/null) \
-		>/dev/null 2>&1 || true
-
-	@-sudo fuser -k \
-		$(PRD_USERS_PORT)/tcp \
-		$(PRD_ORDERS_PORT)/tcp \
-		>/dev/null 2>&1 || true
-
-	@rm -f \
-		users_prd_pf.log \
-		orders_prd_pf.log \
-		users_prd_pf.pid \
-		orders_prd_pf.pid
-
-observability-prd: observability-stg ## [OBS] Acede à observabilidade Kubernetes em PRD
-
-monitor-prd: ## [PRD] Port-forward das aplicações
-	@echo "===== [PRD] A limpar portas anteriores ====="
-
-	@-sudo fuser -k \
-		$(PRD_USERS_PORT)/tcp \
-		$(PRD_ORDERS_PORT)/tcp \
-		>/dev/null 2>&1 || true
-
-	@echo ""
-	@echo "===== [PRD] Port-forward ativo ====="
-	@echo ">> service-users  -> $(PRD_USERS_URL)"
-	@echo ">> service-orders -> $(PRD_ORDERS_URL)"
-	@echo ">> Ctrl+C para sair."
-	@echo ""
-
-	@trap 'sudo fuser -k \
-		$(PRD_USERS_PORT)/tcp \
-		$(PRD_ORDERS_PORT)/tcp \
-		>/dev/null 2>&1 || true' EXIT INT TERM; \
-	$(KUBECTL) port-forward \
-		-n $(NAMESPACE_PRD) \
-		svc/service-users \
-		$(PRD_USERS_PORT):8002 & \
-	$(KUBECTL) port-forward \
-		-n $(NAMESPACE_PRD) \
-		svc/service-orders \
-		$(PRD_ORDERS_PORT):8001 & \
-	wait
-
-validate-prd: helm-template-production helm-install-production wait-prd-healthy test-smoke-prd ## [PRD] Valida Produção
-	@echo ""
-	@echo "===== [PRD] ✅ VALIDAÇÃO PASSOU ✅ ====="
-
-
-# ════════════════════════════════════════════════════════════════════
-# TESTES UNITÁRIOS / HELM
+# PRD — MicroK8s + Helm + Ingress HTTPS
+# Não se instalam pacotes nem se correm testes em PRD: promove-se a imagem
+# já construída e validada em STG e faz-se apenas o start.
 # ════════════════════════════════════════════════════════════════════
 
-test-unit: install ## Executa os testes unitários
-	@echo "===== [TEST] service-users ====="
-	cd service-users && ../$(VENV_PY) -m pytest tests/ -v
+build-prd: ## [PRD] Promove as imagens validadas em STG (re-tag stg → main, sem reconstruir)
+	@for svc in $(SERVICES); do \
+		if ! $(DOCKER) image inspect $(IMAGE_REPO)/$$svc:$(STG_TAG) >/dev/null 2>&1; then \
+			echo "✗ Imagem $(IMAGE_REPO)/$$svc:$(STG_TAG) não existe."; \
+			echo "  PRD só promove o que foi construído e validado em STG: make build-stg run-stg test-stg"; \
+			exit 1; \
+		fi; \
+		echo "===== [PRD] A promover $$svc:$(STG_TAG) → $$svc:$(PRD_TAG) ====="; \
+		$(DOCKER) tag $(IMAGE_REPO)/$$svc:$(STG_TAG) $(IMAGE_REPO)/$$svc:$(PRD_TAG); \
+		$(DOCKER) save $(IMAGE_REPO)/$$svc:$(PRD_TAG) | $(MICROK8S) ctr image import -; \
+	done
+	$(HELM) lint ./helm -f ./helm/values-production.yaml
+	@echo "===== [PRD] Imagens prontas ✅  (seguinte: make run-prd) ====="
 
-	@echo "===== [TEST] service-orders ====="
-	cd service-orders && ../$(VENV_PY) -m pytest tests/ -v
+push-prd: ## [PRD] (opcional) Publica as imagens de PRD no registry (requer docker login ghcr.io)
+	@for svc in $(SERVICES); do \
+		$(DOCKER) push $(IMAGE_REPO)/$$svc:$(PRD_TAG); \
+	done
 
-helm-lint: ## Valida os Helm Charts
-	@echo "===== [HELM] A validar charts ====="
-	helm lint ./helm
-	helm lint ./helm -f ./helm/values-staging.yaml
-	helm lint ./helm -f ./helm/values-production.yaml
+tls-prd: ## [PRD] Gera o certificado TLS (self-signed) e cria o Secret no cluster
+	@mkdir -p $(CERT_DIR)
+	@if [ ! -f $(CERT_DIR)/tls.crt ]; then \
+		echo "===== [PRD] A gerar certificado self-signed para $(PRD_HOST) ====="; \
+		openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+			-keyout $(CERT_DIR)/tls.key -out $(CERT_DIR)/tls.crt \
+			-subj "/CN=$(PRD_HOST)" -addext "subjectAltName=DNS:$(PRD_HOST)" 2>/dev/null; \
+		chmod 600 $(CERT_DIR)/tls.key; \
+	fi
+	@for ns in $(NAMESPACE_PRD) $(NAMESPACE_AUTH); do \
+		$(KUBECTL) create namespace $$ns --dry-run=client -o yaml | $(KUBECTL) apply -f -; \
+		$(KUBECTL) create secret tls $(TLS_SECRET) -n $$ns \
+			--cert=$(CERT_DIR)/tls.crt --key=$(CERT_DIR)/tls.key \
+			--dry-run=client -o yaml | $(KUBECTL) apply -f -; \
+	done
+
+run-prd: kubeconfig run-infra tls-prd ## [PRD] Faz o start em Produção (Helm + Ingress HTTPS) — sem build e sem testes
+	@echo "===== [PRD] A garantir o Ingress controller ====="
+	$(MICROK8S) enable ingress
+	@echo "===== [PRD] Endpoint de token do Keycloak atrás do Ingress HTTPS ====="
+	sed -e 's/__PRD_HOST__/$(PRD_HOST)/g' -e 's/__INGRESS_CLASS__/$(INGRESS_CLASS)/g' \
+		k8s/ingress/keycloak-token-prd.yaml | $(KUBECTL) apply -f -
+	@echo "===== [PRD] Start via Helm ====="
+	$(HELM) upgrade --install $(RELEASE) ./helm \
+		-n $(NAMESPACE_PRD) --create-namespace \
+		-f ./helm/values-production.yaml \
+		--set image.tag=$(PRD_TAG) \
+		--set ingress.host=$(PRD_HOST) \
+		--set ingress.className=$(INGRESS_CLASS) \
+		--set ingress.controllerNamespace=$(INGRESS_NS) \
+		--wait --timeout 5m
+	@$(MAKE) --no-print-directory status-prd info-prd
+
+status-prd: ## [PRD] Estado dos workloads (health-checks do Kubernetes, HPA, Ingress)
+	$(KUBECTL) get deploy,pods,hpa,pdb,ingress -n $(NAMESPACE_PRD)
+
+info-prd: ## [PRD] Mostra como aceder a Produção
+	@echo ""
+	@echo "===== [PRD] Produção disponível em $(PRD_URL) ✅ ====="
+	@echo "  BACKOFFICE     $(PRD_URL)/"
+	@echo "  API            $(PRD_URL)/users  ·  $(PRD_URL)/orders"
+	@echo "  Token          $(PRD_URL)$(TOKEN_PATH)"
+	@echo ""
+	@echo "  O host tem de resolver para o nó do cluster. Na própria máquina:"
+	@echo "      echo '127.0.0.1 $(PRD_HOST)' | sudo tee -a /etc/hosts"
+	@echo "  Certificado self-signed: usar 'curl -k' (ou --cacert $(CERT_DIR)/tls.crt)."
+	@echo "  Como usar: README, secções 5 e 7."
+	@echo ""
+
+stop-prd: ## [PRD] Remove a release de Produção (mantém namespace, imagens e infraestrutura)
+	-@$(MAKE) --no-print-directory kubeconfig
+	-$(HELM) uninstall $(RELEASE) -n $(NAMESPACE_PRD) --wait
+
+clean-prd: ## [PRD] Remove release, namespace (PVCs, Secrets), Ingress, certificado e imagens de Produção
+	@echo "===== [CLEAN PRD] Release Helm e namespace $(NAMESPACE_PRD) ====="
+	-@$(MAKE) --no-print-directory kubeconfig
+	-$(HELM) uninstall $(RELEASE) -n $(NAMESPACE_PRD) --wait
+	-$(KUBECTL) delete namespace $(NAMESPACE_PRD) --ignore-not-found --wait=true --timeout=180s
+	@echo "===== [CLEAN PRD] Ingress do token e Secret TLS no namespace $(NAMESPACE_AUTH) ====="
+	-$(KUBECTL) delete ingress keycloak-token -n $(NAMESPACE_AUTH) --ignore-not-found
+	-$(KUBECTL) delete secret $(TLS_SECRET) -n $(NAMESPACE_AUTH) --ignore-not-found
+	rm -rf $(CERT_DIR)
+	@echo "===== [CLEAN PRD] Imagens (MicroK8s e Docker) ====="
+	@for svc in $(SERVICES); do \
+		$(MICROK8S) ctr image rm $(IMAGE_REPO)/$$svc:$(PRD_TAG) >/dev/null 2>&1 || true; \
+		$(DOCKER) image rm -f $(IMAGE_REPO)/$$svc:$(PRD_TAG) >/dev/null 2>&1 || true; \
+	done
 
 # ════════════════════════════════════════════════════════════════════
-# VALIDAÇÃO COMPLETA
+# GERAL
 # ════════════════════════════════════════════════════════════════════
 
-validate-all: ## Executa a validação completa DEV -> STG -> PRD
+lint: ## Valida o Helm chart com os values de cada ambiente
+	$(HELM) lint ./helm
+	$(HELM) lint ./helm -f ./helm/values-staging.yaml
+	$(HELM) lint ./helm -f ./helm/values-production.yaml
+
+clean: clean-prd clean-stg clean-infra clean-dev ## Limpa TUDO: PRD, STG, infraestrutura do cluster e DEV
+	@rm -f $(KUBECONFIG_FILE)
+	@$(call kill_ports,$(OBS_PORTS))
 	@echo ""
-	@echo "=========================================================="
-	@echo "        VALIDAÇÃO COMPLETA DO PROJETO"
-	@echo "=========================================================="
-
-	@echo ""
-	@echo ">> [1/5] A validar DEV..."
-	$(MAKE) validate-dev
-
-	@echo ""
-	@echo ">> [2/5] A preparar Keycloak..."
-	$(MAKE) k8s-auth-apply
-
-	@echo ""
-	@echo ">> [3/5] A preparar Observabilidade..."
-	$(MAKE) k8s-observability-apply
-
-	@echo ""
-	@echo ">> [4/5] A validar STG..."
-	$(MAKE) validate-stg
-
-	@echo ""
-	@echo ">> [5/5] A validar PRD..."
-	$(MAKE) validate-prd
-
-	@echo ""
-	@echo "=========================================================="
-	@echo "         TODAS AS VALIDAÇÕES PASSARAM" ✅
-	@echo "=========================================================="
-
-# ════════════════════════════════════════════════════════════════════
-# LIMPEZA
-# ════════════════════════════════════════════════════════════════════
-
-clean: ## Remove ficheiros temporários e ambiente Python
-	@echo "===== [CLEAN] A limpar ficheiros temporários ====="
-
-	rm -rf $(VENV_DIR)
-	rm -rf .pytest_cache
-	rm -rf .coverage
-	rm -rf htmlcov
-
-	find . \
-		-type d \
-		-name "__pycache__" \
-		-prune \
-		-exec rm -rf {} +
-
-	find . \
-		-type f \
-		-name "*.pyc" \
-		-delete
-
-	find . \
-		-type f \
-		-name "*.pid" \
-		-delete
-
-	find . \
-		-type f \
-		-name "*.log" \
-		-delete
-
-	@echo "===== [CLEAN] Limpeza concluída ✅ ====="
-
-# ════════════════════════════════════════════════════════════════════
-# DESTROY
-# ════════════════════════════════════════════════════════════════════
-
-destroy: ## Remove aplicações, Docker Compose e ambiente Python
-	@echo ""
-	@echo "===== [DESTROY] A remover aplicações ====="
-	@echo ""
-
-	@echo ">> A remover release STG..."
-	@unset KUBECONFIG; helm uninstall projeto-final -n $(NAMESPACE_STG) || true
-
-	@echo ">> A remover release PRD..."
-	@unset KUBECONFIG; helm uninstall projeto-final -n $(NAMESPACE_PRD) || true
-
-	@echo ">> A parar Docker Compose..."
-	$(COMPOSE) down -v --remove-orphans || true
-
-	@echo ">> A remover ambiente virtual Python..."
-	rm -rf $(VENV_DIR)
-
-	@echo ""
-	@echo ">> Aplicações e ambiente Python removidos. ✅"
-	@echo ">> Os namespaces auth/observability não são removidos automaticamente por serem infraestrutura partilhada."
+	@echo "===== [CLEAN] Tudo removido ✅ ====="
+	@echo "  Cluster: releases Helm, namespaces $(NAMESPACE_PRD)/$(NAMESPACE_STG)/$(NAMESPACE_AUTH)/$(NAMESPACE_OBS),"
+	@echo "           PVCs, Secrets, Ingress, ClusterRole/Binding e imagens importadas."
+	@echo "  Local:   containers, volumes, rede e imagens do Compose, $(VENV_DIR), $(CERT_DIR), caches e *.db."
+	@echo "  (O MicroK8s continua instalado; para o parar: sudo snap stop microk8s)"

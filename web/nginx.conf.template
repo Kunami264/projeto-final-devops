@@ -1,0 +1,40 @@
+# Backoffice: páginas estáticas + proxy para as APIs e para o login do Keycloak,
+# de modo a que o browser fale sempre com um único endereço (sem CORS).
+# ${USERS_URL}, ${ORDERS_URL} e ${KEYCLOAK_URL} são substituídos no arranque.
+server {
+    listen 8080;
+    server_name _;
+    server_tokens off;
+
+    root /usr/share/nginx/html;
+    index index.html;
+
+    add_header Content-Security-Policy "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "DENY" always;
+    add_header Referrer-Policy "no-referrer" always;
+    add_header Cache-Control "no-cache" always;
+
+    location = /healthz {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location / {
+        try_files $uri $uri/ =404;
+    }
+
+    location /users {
+        proxy_pass ${USERS_URL};
+    }
+
+    location /orders {
+        proxy_pass ${ORDERS_URL};
+    }
+
+    # Só o endpoint de token: a consola de administração do Keycloak não passa por aqui.
+    location = /realms/projeto-final/protocol/openid-connect/token {
+        proxy_pass ${KEYCLOAK_URL};
+    }
+}

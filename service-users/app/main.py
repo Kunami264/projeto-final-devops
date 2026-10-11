@@ -1,7 +1,9 @@
 import os
 
-from fastapi import Depends, FastAPI, HTTPException
-from pydantic import BaseModel
+from fastapi import Depends, FastAPI, HTTPException, Response
+from pydantic import BaseModel, Field
+from sqlalchemy.exc import IntegrityError, SQLAlchemyError
+from sqlalchemy.orm import Session
 from opentelemetry import trace
 from opentelemetry.sdk.resources import Resource
 from opentelemetry.sdk.trace import TracerProvider
@@ -10,7 +12,9 @@ from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExport
 from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from prometheus_fastapi_instrumentator import Instrumentator
 
+from app.db import Base, SessionLocal, engine, get_db
 from app.logging_setup import configure_logging
+from app.models import UserModel
 from app.security import TokenClaims, require_scope
 
 SERVICE_NAME = "service-users"
@@ -34,7 +38,7 @@ trace.set_tracer_provider(provider)
 app = FastAPI(
     title="service-users",
     description="Microsserviço de gestão de utilizadores",
-    version="1.2.0",
+    version="1.3.0",
 )
 FastAPIInstrumentor.instrument_app(app)
 
@@ -48,34 +52,117 @@ class User(BaseModel):
     email: str
 
 
-USERS_DB: dict[int, User] = {
-    1: User(id=1, name="Daniel Silva", email="daniel.silva@example.com"),
-    2: User(id=2, name="Ana Costa", email="ana.costa@example.com"),
-    3: User(id=3, name="Miguel Santos", email="miguel.santos@example.com"),
-}
+class UserCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=254)
+
+
+SEED_USERS = [
+    {"name": "Daniel Silva", "email": "daniel.silva@example.com"},
+    {"name": "Ana Costa", "email": "ana.costa@example.com"},
+    {"name": "Miguel Santos", "email": "miguel.santos@example.com"},
+]
+
+
+def seed_users() -> None:
+    """Carrega os utilizadores de demonstração se a tabela estiver vazia."""
+    with SessionLocal() as db:
+        if db.query(UserModel).first() is not None:
+            return
+        db.add_all(UserModel(**u) for u in SEED_USERS)
+        db.commit()
+
+
+# Com várias réplicas a arrancar em simultâneo, só uma consegue criar a tabela /
+# inserir os dados iniciais — as restantes encontram-nos já feitos.
+try:
+    Base.metadata.create_all(bind=engine)
+    seed_users()
+except SQLAlchemyError as exc:
+    logger.warning("Inicialização da base de dados já feita por outra réplica: %s", exc)
 
 
 @app.get("/health", tags=["infra"])
 def health() -> dict:
-    """Usado pelos smoke tests em PRD e pelos healthchecks do Docker/K8s."""
+    """Usado pelos healthchecks do Docker/K8s."""
     return {"status": "ok", "service": SERVICE_NAME}
 
 
 @app.get("/users", response_model=list[User], tags=["users"])
-def list_users(claims: TokenClaims = Depends(require_scope("users:read"))) -> list[User]:
+def list_users(
+    db: Session = Depends(get_db),
+    claims: TokenClaims = Depends(require_scope("users:read")),
+) -> list[dict]:
     logger.info("Listagem de utilizadores pedida por '%s'", claims.subject)
-    return list(USERS_DB.values())
+    return [u.to_dict() for u in db.query(UserModel).order_by(UserModel.id).all()]
+
+
+@app.post("/users", response_model=User, status_code=201, tags=["users"])
+def create_user(
+    user: UserCreate,
+    db: Session = Depends(get_db),
+    claims: TokenClaims = Depends(require_scope("users:write")),
+) -> dict:
+    new_user = UserModel(name=user.name, email=user.email)
+    db.add(new_user)
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Já existe um utilizador com este email")
+    db.refresh(new_user)
+    logger.info("Utilizador %d criado por '%s'", new_user.id, claims.subject)
+    return new_user.to_dict()
 
 
 @app.get("/users/{user_id}", response_model=User, tags=["users"])
 def get_user(
-    user_id: int, claims: TokenClaims = Depends(require_scope("users:read"))
-) -> User:
-    user = USERS_DB.get(user_id)
+    user_id: int,
+    db: Session = Depends(get_db),
+    claims: TokenClaims = Depends(require_scope("users:read")),
+) -> dict:
+    user = db.get(UserModel, user_id)
     if not user:
         logger.info("Utilizador %d não encontrado (pedido por '%s')", user_id, claims.subject)
         raise HTTPException(status_code=404, detail="Utilizador não encontrado")
-    return user
+    return user.to_dict()
+
+
+@app.put("/users/{user_id}", response_model=User, tags=["users"])
+def update_user(
+    user_id: int,
+    data: UserCreate,
+    db: Session = Depends(get_db),
+    claims: TokenClaims = Depends(require_scope("users:write")),
+) -> dict:
+    user = db.get(UserModel, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilizador não encontrado")
+    user.name = data.name
+    user.email = data.email
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Já existe um utilizador com este email")
+    db.refresh(user)
+    logger.info("Utilizador %d editado por '%s'", user_id, claims.subject)
+    return user.to_dict()
+
+
+@app.delete("/users/{user_id}", status_code=204, tags=["users"])
+def delete_user(
+    user_id: int,
+    db: Session = Depends(get_db),
+    claims: TokenClaims = Depends(require_scope("users:write")),
+) -> Response:
+    user = db.get(UserModel, user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="Utilizador não encontrado")
+    db.delete(user)
+    db.commit()
+    logger.info("Utilizador %d apagado por '%s'", user_id, claims.subject)
+    return Response(status_code=204)
 
 
 if __name__ == "__main__":
