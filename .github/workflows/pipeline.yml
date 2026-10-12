@@ -372,6 +372,15 @@ jobs:
             requireClientSecret: true
           EOF
 
+          # Uma instalação anterior que falhou ou foi interrompida deixa a release sem
+          # nenhuma revisão "deployed", e o Helm recusa o upgrade ("has no deployed
+          # releases"). Nesse caso remove-se a release presa; os dados ficam no volume.
+          if helm status projeto-final -n staging >/dev/null 2>&1 && \
+             ! helm history projeto-final -n staging 2>/dev/null | grep -qw deployed; then
+            echo "Release presa de uma tentativa anterior — a remover antes de instalar."
+            helm uninstall projeto-final -n staging --wait
+          fi
+
           helm upgrade --install projeto-final ./helm \
             -n staging --create-namespace \
             -f ./helm/values-staging.yaml \
@@ -554,6 +563,15 @@ jobs:
             clientSecret: "${{ secrets.OIDC_CLIENT_SECRET_PRD }}"
             requireClientSecret: true
           EOF
+
+          # Uma instalação anterior que falhou ou foi interrompida deixa a release sem
+          # nenhuma revisão "deployed", e o Helm recusa o upgrade ("has no deployed
+          # releases"). Nesse caso remove-se a release presa; os dados ficam no volume.
+          if helm status projeto-final -n production >/dev/null 2>&1 && \
+             ! helm history projeto-final -n production 2>/dev/null | grep -qw deployed; then
+            echo "Release presa de uma tentativa anterior — a remover antes de instalar."
+            helm uninstall projeto-final -n production --wait
+          fi
 
           helm upgrade --install projeto-final ./helm \
             -n production --create-namespace \

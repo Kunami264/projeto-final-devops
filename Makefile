@@ -127,6 +127,10 @@ OBS_PORTS             := $(OBS_JAEGER_PORT) $(OBS_PROMETHEUS_PORT) $(OBS_GRAFANA
 
 # $(call forward,<namespace>,<service>,<porta local>,<porta do service>)
 forward = $(KUBECTL) port-forward -n $(1) svc/$(2) $(3):$(4) >/dev/null 2>&1 &
+# $(call helm_unstick,<namespace>) — remove uma release que ficou sem nenhuma revisão
+# "deployed" (instalação anterior falhada/interrompida); sem isto o Helm recusa o
+# upgrade com "has no deployed releases". Os dados ficam no volume (resource-policy keep).
+helm_unstick = if $(HELM) status $(RELEASE) -n $(1) >/dev/null 2>&1 && ! $(HELM) history $(RELEASE) -n $(1) 2>/dev/null | grep -qw deployed; then echo "Release presa de uma tentativa anterior: a remover antes de instalar."; $(HELM) uninstall $(RELEASE) -n $(1) --wait; fi
 # $(call image,<service>,<tag>)
 image = $(IMAGE_REPO)/$(1):$(2)
 
@@ -313,6 +317,7 @@ build-stg: $(STAMP_STG) ## [STG] Constrói as imagens com os pacotes de PRD, car
 
 run-stg: kubeconfig run-infra ## [STG] Faz o deploy em Staging (Helm) e aguarda os workloads
 	@echo "===== [STG] Deploy via Helm ====="
+	@$(call helm_unstick,$(NAMESPACE_STG))
 	$(HELM) upgrade --install $(RELEASE) ./helm \
 		-n $(NAMESPACE_STG) --create-namespace \
 		-f ./helm/values-staging.yaml \
@@ -439,6 +444,7 @@ run-prd: kubeconfig run-infra tls-prd ## [PRD] Faz o start em Produção (Helm +
 	sed -e 's/__PRD_HOST__/$(PRD_HOST)/g' -e 's/__INGRESS_CLASS__/$(INGRESS_CLASS)/g' \
 		k8s/ingress/keycloak-token-prd.yaml | $(KUBECTL) apply -f -
 	@echo "===== [PRD] Start via Helm ====="
+	@$(call helm_unstick,$(NAMESPACE_PRD))
 	$(HELM) upgrade --install $(RELEASE) ./helm \
 		-n $(NAMESPACE_PRD) --create-namespace \
 		-f ./helm/values-production.yaml \

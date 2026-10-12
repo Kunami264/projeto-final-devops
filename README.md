@@ -434,6 +434,7 @@ Depois de `make clean` não fica nenhum recurso do projeto no cluster nem na má
 | Mensagem | Causa e solução |
 |---|---|
 | `kubernetes cluster unreachable: the server could not find the requested resource` | O Helm não sabia onde está o cluster e foi bater à porta 8080 (o Keycloak de DEV). Está resolvido: `run-stg` e `run-prd` geram o acesso ao cluster automaticamente. Se usar o `helm` à mão, acrescentar `--kubeconfig kubeconfig-make.yaml` (depois de `make kubeconfig`) |
+| `UPGRADE FAILED: "projeto-final" has no deployed releases` | Uma instalação anterior falhou ou foi interrompida. Está resolvido: `run-stg`, `run-prd` e o pipeline removem a release presa antes de instalar. À mão: `helm --kubeconfig kubeconfig-make.yaml uninstall projeto-final -n production` |
 | `Não foi possível obter o kubeconfig do cluster` | O MicroK8s não está a correr: `sudo snap start microk8s` e `sudo microk8s status --wait-ready` |
 | `401 Unauthorized` no login do site ou nos testes (`make test-stg`), depois de atualizar o projeto | O Keycloak do cluster ainda tem as contas da versão anterior (ver a nota seguinte). Correr `make reset-keycloak` e repetir |
 
