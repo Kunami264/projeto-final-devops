@@ -216,7 +216,8 @@ jobs:
     name: Deploy DEV (Docker Compose)
     needs: test-unit
     if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
-    runs-on: self-hosted
+    # só o runner Linux (a VM com MicroK8s); um runner noutro sistema não serve
+    runs-on: [self-hosted, Linux]
     environment: dev
     timeout-minutes: 10
     concurrency:
@@ -280,7 +281,8 @@ jobs:
     name: Deploy STG + testes de validação
     needs: test-integration
     if: github.ref == 'refs/heads/stg' && github.event_name == 'push'
-    runs-on: self-hosted
+    # só o runner Linux (a VM com MicroK8s); um runner noutro sistema não serve
+    runs-on: [self-hosted, Linux]
     environment: staging
     timeout-minutes: 20
     concurrency:
@@ -470,7 +472,8 @@ jobs:
     name: 🔒 Deploy PRD (Helm + Ingress HTTPS, com aprovação manual)
     needs: promote
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    runs-on: self-hosted
+    # só o runner Linux (a VM com MicroK8s); um runner noutro sistema não serve
+    runs-on: [self-hosted, Linux]
     environment: production
     timeout-minutes: 20
     env:
