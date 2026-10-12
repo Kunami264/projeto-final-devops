@@ -225,8 +225,23 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # O runner pode ter o Compose como plugin ("docker compose") ou como binário
+      # ("docker-compose"), e o plugin instalado só para um utilizador não é visto
+      # quando o runner corre como serviço com outro utilizador.
+      - name: Detetar o comando do Docker Compose
+        run: |
+          if docker compose version >/dev/null 2>&1; then
+            echo "COMPOSE=docker compose" >> "$GITHUB_ENV"
+          elif command -v docker-compose >/dev/null 2>&1; then
+            echo "COMPOSE=docker-compose" >> "$GITHUB_ENV"
+          else
+            echo "Docker Compose não encontrado para o utilizador '$(whoami)' (HOME=$HOME) na máquina '$(hostname)'."
+            echo "Instalar o plugin para todos os utilizadores: sudo apt-get install docker-compose-plugin"
+            exit 1
+          fi
+
       - name: Deploy via Docker Compose
-        run: docker compose up -d --build
+        run: $COMPOSE up -d --build
 
       - name: Smoke check pós-deploy
         run: |
@@ -253,12 +268,12 @@ jobs:
 
           echo "### Logs recentes — service-orders" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          docker compose logs --tail=30 service-orders >> "$GITHUB_STEP_SUMMARY"
+          $COMPOSE logs --tail=30 service-orders >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
           echo "### Logs recentes — service-users" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
-          docker compose logs --tail=30 service-users >> "$GITHUB_STEP_SUMMARY"
+          $COMPOSE logs --tail=30 service-users >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
   deploy-stg:
