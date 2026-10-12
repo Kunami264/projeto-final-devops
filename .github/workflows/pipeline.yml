@@ -217,7 +217,7 @@ jobs:
     needs: test-unit
     if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
     # só o runner Linux (a VM com MicroK8s); um runner noutro sistema não serve
-    runs-on: [self-hosted, Linux]
+    runs-on: [self-hosted]
     environment: dev
     timeout-minutes: 10
     concurrency:
@@ -282,7 +282,7 @@ jobs:
     needs: test-integration
     if: github.ref == 'refs/heads/stg' && github.event_name == 'push'
     # só o runner Linux (a VM com MicroK8s); um runner noutro sistema não serve
-    runs-on: [self-hosted, Linux]
+    runs-on: [self-hosted]
     environment: staging
     timeout-minutes: 20
     concurrency:
@@ -473,7 +473,7 @@ jobs:
     needs: promote
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     # só o runner Linux (a VM com MicroK8s); um runner noutro sistema não serve
-    runs-on: [self-hosted, Linux]
+    runs-on: [self-hosted]
     environment: production
     timeout-minutes: 20
     env:

@@ -21,7 +21,7 @@ jobs:
     name: 🧹 make clean
     if: inputs.confirmar == 'limpar'
     # só o runner Linux (a VM com MicroK8s); um runner noutro sistema não serve
-    runs-on: [self-hosted, Linux]
+    runs-on: [self-hosted]
     environment: production-postdeploy
     timeout-minutes: 20
     steps:
