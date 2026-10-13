@@ -103,7 +103,6 @@ def test_order_creation_with_invalid_user_returns_404(orders_write_headers):
 
 @pytest.mark.integration
 def test_create_edit_and_delete_user_and_order_end_to_end(orders_write_headers):
-    """Ciclo completo que o cliente usa: criar -> editar -> apagar utilizador e encomenda."""
     headers = orders_write_headers
     email = f"cliente.{int(time.time() * 1000)}@example.com"
 
@@ -167,7 +166,6 @@ def test_backoffice_serves_the_application():
 
 @pytest.mark.integration
 def test_backoffice_login_and_crud_through_its_own_address():
-    """O que o browser do funcionário faz: login no client público e CRUD, tudo via backoffice."""
     token_url = f"{WEB_URL}/realms/projeto-final/protocol/openid-connect/token"
     r = httpx.post(
         token_url,

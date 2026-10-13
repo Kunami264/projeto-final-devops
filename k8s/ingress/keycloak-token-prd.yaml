@@ -1,6 +1,3 @@
-# Expõe APENAS o endpoint de token do Keycloak no ponto de entrada HTTPS de PRD,
-# para o cliente se autenticar sem port-forward. A consola de administração
-# não é exposta. __PRD_HOST__ / __INGRESS_CLASS__ são substituídos por `make run-prd`.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

@@ -1,5 +1,3 @@
-"""Smoke tests — correm em STG, logo após o deploy, como última validação antes de PRD."""
-
 import os
 
 import httpx

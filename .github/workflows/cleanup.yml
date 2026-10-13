@@ -1,7 +1,5 @@
 name: Limpeza dos ambientes
 
-# Destrói TUDO o que o projeto criou no runner (PRD, STG, infraestrutura do
-# cluster e DEV). É manual de propósito: um deploy em PRD não se auto-destrói.
 on:
   workflow_dispatch:
     inputs:
@@ -20,7 +18,6 @@ jobs:
   cleanup:
     name: 🧹 make clean
     if: inputs.confirmar == 'limpar'
-    # só o runner Linux (a VM com MicroK8s); um runner noutro sistema não serve
     runs-on: [self-hosted]
     environment: production-postdeploy
     timeout-minutes: 20

@@ -1,14 +1,3 @@
-"""Demonstração do ciclo completo da aplicação, tal como o cliente a usa.
-
-Autentica-se no Keycloak, cria um utilizador, cria uma encomenda para esse
-utilizador, edita ambos, lista-os e no fim apaga a encomenda e o utilizador.
-
-Só usa a biblioteca standard — corre com qualquer python3, sem ambiente virtual.
-
-    python3 scripts/demo.py                       # DEV (portas do Docker Compose)
-    python3 scripts/demo.py --base-url https://projeto-final.test --insecure   # PRD
-"""
-
 import argparse
 import json
 import os

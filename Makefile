@@ -398,8 +398,6 @@ clean-stg: ## [STG] Remove release, namespace (PVCs, Secrets) e imagens de Stagi
 
 # ════════════════════════════════════════════════════════════════════
 # PRD — MicroK8s + Helm + Ingress HTTPS
-# Não se instalam pacotes nem se correm testes em PRD: promove-se a imagem
-# já construída e validada em STG e faz-se apenas o start.
 # ════════════════════════════════════════════════════════════════════
 
 build-prd: ## [PRD] Promove as imagens validadas em STG (re-tag stg → main, sem reconstruir)

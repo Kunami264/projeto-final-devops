@@ -1,6 +1,3 @@
-# Backoffice: páginas estáticas + proxy para as APIs e para o login do Keycloak,
-# de modo a que o browser fale sempre com um único endereço (sem CORS).
-# ${USERS_URL}, ${ORDERS_URL}, ${KEYCLOAK_URL} e o servidor DNS são substituídos no arranque.
 server {
     listen 8080;
     server_name _;
@@ -25,9 +22,6 @@ server {
         try_files $uri $uri/ =404;
     }
 
-    # Os destinos são resolvidos por DNS a cada pedido (resolver + variável), e não só
-    # no arranque do nginx: se um serviço for recriado e mudar de IP (por exemplo o
-    # Keycloak depois de um reset), o backoffice continua a funcionar sem reiniciar.
     resolver ${NGINX_LOCAL_RESOLVERS} valid=10s ipv6=off;
     proxy_connect_timeout 5s;
 
@@ -41,7 +35,6 @@ server {
         proxy_pass $orders_upstream;
     }
 
-    # Só o endpoint de token: a consola de administração do Keycloak não passa por aqui.
     location = /realms/projeto-final/protocol/openid-connect/token {
         set $keycloak_upstream ${KEYCLOAK_URL};
         proxy_pass $keycloak_upstream;

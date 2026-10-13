@@ -1,11 +1,8 @@
 "use strict";
 
-// Tudo é servido no mesmo endereço (proxy do nginx em DEV/STG, Ingress em PRD),
-// por isso os pedidos são relativos e não há CORS.
 const TOKEN_URL = "/realms/projeto-final/protocol/openid-connect/token";
 const CLIENT_ID = "backoffice";
 
-// Os tokens ficam só em memória: fechar ou recarregar a página termina a sessão.
 const session = { accessToken: null, refreshToken: null, username: null };
 const state = { users: [], orders: [] };
 
@@ -102,7 +99,7 @@ function showMessage(text, isError) {
 
 function cell(text) {
   const td = document.createElement("td");
-  td.textContent = text; // textContent: os dados nunca são interpretados como HTML
+  td.textContent = text; 
   return td;
 }
 

@@ -65,7 +65,6 @@ SEED_USERS = [
 
 
 def seed_users() -> None:
-    """Carrega os utilizadores de demonstração se a tabela estiver vazia."""
     with SessionLocal() as db:
         if db.query(UserModel).first() is not None:
             return
@@ -73,8 +72,7 @@ def seed_users() -> None:
         db.commit()
 
 
-# Com várias réplicas a arrancar em simultâneo, só uma consegue criar a tabela /
-# inserir os dados iniciais — as restantes encontram-nos já feitos.
+
 try:
     Base.metadata.create_all(bind=engine)
     seed_users()
@@ -84,7 +82,6 @@ except SQLAlchemyError as exc:
 
 @app.get("/health", tags=["infra"])
 def health() -> dict:
-    """Usado pelos healthchecks do Docker/K8s."""
     return {"status": "ok", "service": SERVICE_NAME}
 
 

@@ -372,9 +372,6 @@ jobs:
             requireClientSecret: true
           EOF
 
-          # Uma instalação anterior que falhou ou foi interrompida deixa a release sem
-          # nenhuma revisão "deployed", e o Helm recusa o upgrade ("has no deployed
-          # releases"). Nesse caso remove-se a release presa; os dados ficam no volume.
           if helm status projeto-final -n staging >/dev/null 2>&1 && \
              ! helm history projeto-final -n staging 2>/dev/null | grep -qw deployed; then
             echo "Release presa de uma tentativa anterior — a remover antes de instalar."
@@ -393,8 +390,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      # STG é o ambiente onde se valida: integração + smoke contra o cluster.
-      # Só depois de passar aqui é que a imagem pode ser promovida para PRD.
       - name: Testes de integração + smoke contra STG
         run: make test-stg PYTHON=python KUBECTL="microk8s kubectl"
 
@@ -410,7 +405,6 @@ jobs:
           trap cleanup EXIT
 
           echo "## Observabilidade — STG" >> "$GITHUB_STEP_SUMMARY"
-          # Portas alternativas: 9090/16686 podem já pertencer ao DEV no mesmo runner.
           kubectl port-forward -n observability svc/prometheus 19090:9090 >/dev/null 2>&1 & PF_PROM=$!
           kubectl port-forward -n observability svc/jaeger 17686:16686 >/dev/null 2>&1 & PF_JAEGER=$!
           sleep 5
@@ -442,8 +436,6 @@ jobs:
           set -euo pipefail
           shred -u kubeconfig-stg.yaml secret-values.yaml 2>/dev/null || \
             rm -f kubeconfig-stg.yaml secret-values.yaml
-
-  # PRD não reconstrói nem testa: promove a imagem que foi construída e validada em STG.
   promote:
     name: Promover imagem STG → PRD (${{ matrix.service }})
     needs: [prep, security-source, security-images]
@@ -481,7 +473,6 @@ jobs:
     name: 🔒 Deploy PRD (Helm + Ingress HTTPS, com aprovação manual)
     needs: promote
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    # só o runner Linux (a VM com MicroK8s); um runner noutro sistema não serve
     runs-on: [self-hosted]
     environment: production
     timeout-minutes: 20
@@ -546,8 +537,6 @@ jobs:
         run: |
           set -euo pipefail
           microk8s enable ingress
-          # Usa o certificado existente em .certs/ ou gera um self-signed.
-          # Com um domínio real: ingress.tls.certManager no values-production.yaml.
           make tls-prd PRD_HOST="$PRD_HOST" KUBECTL="microk8s kubectl"
           sed -e "s/__PRD_HOST__/$PRD_HOST/g" -e "s/__INGRESS_CLASS__/public/g" \
             k8s/ingress/keycloak-token-prd.yaml | kubectl apply -f -
@@ -564,9 +553,6 @@ jobs:
             requireClientSecret: true
           EOF
 
-          # Uma instalação anterior que falhou ou foi interrompida deixa a release sem
-          # nenhuma revisão "deployed", e o Helm recusa o upgrade ("has no deployed
-          # releases"). Nesse caso remove-se a release presa; os dados ficam no volume.
           if helm status projeto-final -n production >/dev/null 2>&1 && \
              ! helm history projeto-final -n production 2>/dev/null | grep -qw deployed; then
             echo "Release presa de uma tentativa anterior — a remover antes de instalar."
@@ -581,8 +567,6 @@ jobs:
             --set ingress.host="$PRD_HOST" \
             --wait --timeout 5m
 
-      # Em PRD não se correm testes: a disponibilidade é garantida pelos
-      # health-checks do Kubernetes (readiness/liveness), HPA e PDB.
       - name: Health-check dos workloads (readiness do Kubernetes)
         run: |
           set -euo pipefail
@@ -602,7 +586,6 @@ jobs:
           trap cleanup EXIT
 
           echo "## Observabilidade — PRD" >> "$GITHUB_STEP_SUMMARY"
-          # Portas alternativas: 9090/16686 podem já pertencer ao DEV no mesmo runner.
           kubectl port-forward -n observability svc/prometheus 29090:9090 >/dev/null 2>&1 & PF_PROM=$!
           kubectl port-forward -n observability svc/jaeger 27686:16686 >/dev/null 2>&1 & PF_JAEGER=$!
           sleep 5

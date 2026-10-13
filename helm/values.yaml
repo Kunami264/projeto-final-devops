@@ -56,9 +56,7 @@ web:
 
 ingress:
   enabled: false
-  # IngressClass do addon "ingress" do MicroK8s.
   className: public
-  # Namespace do ingress controller (para a NetworkPolicy do service-users).
   controllerNamespace: ingress
   host: ""
   annotations: {}

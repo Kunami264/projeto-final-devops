@@ -5,7 +5,6 @@ from opentelemetry import trace
 
 
 class TraceCorrelationFilter(logging.Filter):
-    """Injeta trace_id/span_id do span ativo em cada LogRecord."""
 
     def filter(self, record: logging.LogRecord) -> bool:
         ctx = trace.get_current_span().get_span_context()

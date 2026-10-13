@@ -6,8 +6,6 @@ metadata:
   labels:
     {{- include "projeto-final.labels" . | nindent 4 }}
   annotations:
-    # Os dados não são apagados com a release (make stop-stg / stop-prd, helm uninstall):
-    # ao voltar a instalar, o Helm reutiliza este volume. Só make clean-* os remove.
     helm.sh/resource-policy: keep
 spec:
   accessModes:

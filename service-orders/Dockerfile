@@ -9,9 +9,6 @@ RUN apt-get update \
     && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
-# A imagem leva TODOS os pacotes já instalados, e só os de PRD (requirements-prd.txt).
-# Os módulos de teste (requirements-dev.txt / requirements-stg.txt) nunca entram aqui.
-# É esta imagem, validada em STG, que é promovida para PRD: lá só se faz push/start.
 COPY requirements-prd.txt .
 RUN pip install --no-cache-dir -r requirements-prd.txt
 

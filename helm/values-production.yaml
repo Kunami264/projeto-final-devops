@@ -23,9 +23,6 @@ serviceOrders:
     minReplicas: 2
     maxReplicas: 8
 
-# Ponto de entrada único e seguro em PRD: HTTPS no Ingress (porta 443).
-# Os Services ficam ClusterIP — não há NodePort HTTP exposto.
-# O host e o certificado são definidos por `make run-prd` (PRD_HOST / make tls-prd).
 ingress:
   enabled: true
   className: public
