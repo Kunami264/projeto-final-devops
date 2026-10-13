@@ -213,7 +213,7 @@ info-dev: ## [DEV] Mostra endereços e credenciais do ambiente local
 	@echo "  Prometheus                  $(DEV_PROMETHEUS_URL)       sem login"
 	@echo "  Jaeger                      $(DEV_JAEGER_URL)      sem login"
 	@echo ""
-	@echo "  Criar/editar/apagar clientes e encomendas: no site, ou make demo-dev (README, secção 7)"
+	@echo "  Criar/editar/apagar clientes e encomendas: no site, ou make demo-dev (README, secção 6)"
 	@echo ""
 
 test-dev: $(STAMP_DEV) ## [DEV] Executa os testes unitários
@@ -469,7 +469,7 @@ ifeq ($(CLUSTER),kind)
 	@echo "  2) Cluster kind: deixar a correr noutro terminal   make forward-prd"
 endif
 	@echo "  Certificado self-signed: o browser mostra um aviso na primeira visita."
-	@echo "  Como usar: README, secções 5 e 7."
+	@echo "  Como usar: README, secções 4.3 e 6."
 	@echo ""
 
 forward-prd: ## [PRD] Abre o acesso HTTPS ao Ingress (só necessário em cluster kind)
