@@ -260,9 +260,18 @@ spec:
       containers:
         - name: keycloak
           image: quay.io/keycloak/keycloak:26.0
+          # O login da consola admin usa o realm master: o Frontend URL desse realm aponta
+          # para KC_HOSTNAME_ADMIN (o realm projeto-final mantém o issuer de KC_HOSTNAME)
+          command: ["/bin/bash", "-c"]
           args:
-            - start-dev
-            - --import-realm
+            - |
+              ( for i in {1..60}; do
+                  sleep 5
+                  /opt/keycloak/bin/kcadm.sh config credentials --config /tmp/kcadm.config --server http://localhost:8080 --realm master --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1 &&
+                  /opt/keycloak/bin/kcadm.sh update realms/master --config /tmp/kcadm.config -s "attributes.frontendUrl=$KC_HOSTNAME_ADMIN" &&
+                  break
+                done ) &
+              exec /opt/keycloak/bin/kc.sh start-dev --import-realm
           env:
             - name: KEYCLOAK_ADMIN
               valueFrom:
@@ -276,6 +285,9 @@ spec:
                   key: KEYCLOAK_ADMIN_PASSWORD
             - name: KC_HOSTNAME
               value: "http://keycloak.auth.svc.cluster.local:8080"
+            # Consola admin aberta no browser via `make forward-infra` (OBS_KEYCLOAK_PORT no Makefile)
+            - name: KC_HOSTNAME_ADMIN
+              value: "http://localhost:8280"
             - name: KC_HTTP_ENABLED
               value: "true"
             - name: KC_HOSTNAME_STRICT
