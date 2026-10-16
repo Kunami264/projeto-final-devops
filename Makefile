@@ -226,7 +226,7 @@ demo-dev: ## [DEV] Cria, edita e apaga um utilizador e uma encomenda (ciclo comp
 	@USERS_URL=$(DEV_USERS_URL) ORDERS_URL=$(DEV_ORDERS_URL) KEYCLOAK_BASE_URL=$(DEV_KEYCLOAK_URL) \
 		$(PYTHON) scripts/demo.py --username '$(DEMO_USERNAME)' --password '$(DEMO_PASSWORD)'
 
-token-dev: $(STAMP_DEV) ## [DEV] Imprime um token de acesso (para o Swagger ou curl)
+token-dev: $(STAMP_DEV) ## [DEV]  Imprime um token de acesso (para o Swagger ou curl)
 	@$(VENV_PY) scripts/get_token.py --grant password \
 		--token-url $(DEV_KEYCLOAK_URL)$(TOKEN_PATH) \
 		--username '$(DEMO_USERNAME)' --password '$(DEMO_PASSWORD)'

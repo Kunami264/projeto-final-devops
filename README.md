@@ -20,7 +20,7 @@ O presente documento descreve a solução e o procedimento de instalação, util
 
 ## 1. Descrição da solução
 
-A plataforma destina-se a organizações que necessitam de registar os seus clientes e as respetivas encomendas. Disponibiliza:
+A plataforma destina-se a organizações que necessitam de registar os seus clientes e as respetivas encomendas. Disponibiliza :
 
 - um **site de gestão** (backoffice), no qual os funcionários criam, consultam, editam e apagam clientes e encomendas;
 - uma **API REST**, com respostas em JSON, que permite a integração com outras aplicações (loja online, aplicação móvel).
