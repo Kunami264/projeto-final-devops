@@ -32,7 +32,7 @@ A plataforma destina-se a organizações que necessitam de registar os seus clie
 | Entregas rápidas e controladas | Cada alteração é analisada, testada e publicada automaticamente pela ordem DEV → STG → PRD. A versão que chega a produção é exatamente a que foi validada em STG |
 | Disponibilidade e escalabilidade | Em produção, cada serviço executa com um mínimo de duas réplicas e escala automaticamente em função da carga |
 | Proteção dos dados | Em produção existe um único ponto de entrada, em HTTPS, e todas as operações exigem autenticação e a permissão adequada |
-| Deteção precoce de problemas | Métricas, alertas e rastreio de pedidos entre serviços, disponíveis em tempo real |
+| Deteção precoce de problemas | Análise de vulnerabilidades do código, das dependências e das imagens antes de cada entrega; métricas e alertas em tempo real; rastreio de pedidos entre serviços em DEV e STG |
 | Reprodutibilidade | Cada ambiente é criado com dois comandos e totalmente removido com um |
 
 ### Ambientes
@@ -41,7 +41,7 @@ A plataforma destina-se a organizações que necessitam de registar os seus clie
 |---|---|---|
 | **DEV** | Docker Compose | Desenvolvimento e testes unitários |
 | **STG** | Kubernetes (MicroK8s), *namespace* `staging` | Validação: testes de integração e *smoke*. Apenas o que é aprovado neste ambiente segue para produção |
-| **PRD** | Kubernetes (MicroK8s), *namespace* `production` | Exploração, em HTTPS. Nada é construído nem gerado neste ambiente e não se executam testes: apenas se sobe o que STG preparou e validou |
+| **PRD** | Kubernetes (MicroK8s), *namespace* `production` | Exploração, em HTTPS. Não se constroem imagens nem se executam testes neste ambiente |
 
 ---
 
@@ -71,7 +71,7 @@ Em STG e PRD, o Keycloak e as ferramentas de monitorização residem em *namespa
 
 | Ambiente | Requisitos |
 |---|---|
-| DEV | Docker com Compose v2 (`docker compose` ou `docker-compose`), `make` e Python 3.12 ou superior com o módulo `venv` (validado em 3.12 e 3.14) |
+| DEV | Docker com Compose v2 (`docker compose` ou `docker-compose`), `make`, `curl` e Python 3.12 ou superior com o módulo `venv` (validado em 3.12 e 3.14). O SonarQube, iniciado por `make security`, necessita de cerca de 2 GB de memória livre |
 | STG e PRD | Os anteriores, MicroK8s, Helm, `openssl` e `fuser` (pacote `psmisc`, em Linux) |
 
 Preparação do MicroK8s (uma única vez):
@@ -128,9 +128,9 @@ STG é o ambiente onde tudo é construído, gerado e validado. Só o que é apro
 
 | Passo | Comando | Resultado |
 |---|---|---|
-| 1. Construção | `make build-stg` | Constrói as imagens com todas as dependências de produção instaladas, carrega-as no cluster, gera o certificado TLS de PRD e instala no `.venv` os módulos de teste |
-| 2. Arranque | `make run-stg` | Instala o Keycloak, as ferramentas de monitorização, o Ingress controller e a aplicação |
-| 3. Validação | `make test-stg` | Executa os testes de integração, *smoke* e de vulnerabilidades do código. Se forem aprovados, prepara PRD: promove as imagens (`stg` → `main`, sem novo *build*) e instala o certificado TLS no cluster |
+| 1. Construção | `make build-stg` | Constrói as imagens com todas as dependências de produção instaladas, carrega-as no cluster e instala no `.venv` os módulos de teste |
+| 2. Arranque | `make run-stg` | Instala o Keycloak, as ferramentas de monitorização e a aplicação |
+| 3. Validação | `make test-stg` | Executa os testes de integração e *smoke*. A promoção para PRD só deve ocorrer se forem aprovados |
 | 4. Demonstração (opcional) | `make demo-stg` | Cria, edita e apaga um cliente e uma encomenda |
 
 STG não é exposto para o exterior do cluster. O acesso faz-se por *port-forward*, mantendo em execução num terminal:
@@ -261,11 +261,11 @@ sum(rate(http_requests_total[5m])) by (service)
 | Comando | Efeito |
 |---|---|
 | `make stop-dev`, `make stop-stg`, `make stop-prd` | Para o ambiente, preservando os dados e as imagens |
-| `make clean-dev` | Limpeza Docker completa: `docker compose down -v --rmi all --remove-orphans`, paragem de todos os contentores, `docker system prune -af --volumes`, `volume prune`, `network prune` e `builder prune`; remove ainda o `.venv` e os ficheiros temporários e apresenta `docker system df`. **Elimina os dados** |
-| `make clean-stg` | Remove a aplicação e o *namespace* `staging`, todas as imagens do projeto (no cluster e no Docker) e o certificado gerado em STG. **Elimina os dados** |
-| `make clean-prd` | Remove a aplicação, o *namespace* `production`, o Ingress do Keycloak, o Secret TLS e a entrada `projeto-final.test` do `/etc/hosts`. **Elimina os dados** |
-| `make clean-infra` | Remove o Keycloak, a monitorização, o Ingress controller, o RBAC de cluster do Prometheus e as imagens de terceiros carregadas no cluster |
-| `make clean` | Executa todas as limpezas anteriores e remove os ficheiros de acesso ao cluster (`kubeconfig-*.yaml`) e os *port-forwards* ativos |
+| `make clean-dev` | Remove contentores, volumes, rede e imagens do Compose, o `.venv` e os ficheiros temporários. **Elimina os dados** |
+| `make clean-stg` | Remove a aplicação, o *namespace* `staging` e as imagens de STG. **Elimina os dados** |
+| `make clean-prd` | Remove a aplicação, o *namespace* `production`, o certificado e as imagens de PRD. **Elimina os dados** |
+| `make clean-infra` | Remove o Keycloak e as ferramentas de monitorização do cluster |
+| `make clean` | Executa todas as limpezas anteriores |
 
 Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na máquina; permanece apenas o MicroK8s instalado. **Atenção:** `make clean-dev` (incluído em `make clean`) para e remove todos os contentores, imagens e volumes Docker da máquina, e não apenas os deste projeto. Em cluster kind, o nó do cluster é preservado. A remoção da entrada do `/etc/hosts` pede a palavra-passe de administrador.
 
@@ -279,6 +279,7 @@ Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na m
 | `PRD não está preparado` ao executar `make run-prd` | Os passos de STG não foram executados | `make build-stg`, `make run-stg` e `make test-stg` |
 | `kubernetes cluster unreachable` ao utilizar o `helm` diretamente | O Helm não tem indicação do cluster a utilizar | Executar `make kubeconfig` e acrescentar `--kubeconfig kubeconfig-make.yaml` ao comando. Os comandos `make` fazem-no automaticamente |
 | `UPGRADE FAILED: "projeto-final" has no deployed releases` | Uma instalação anterior foi interrompida | Os comandos `make run-stg` e `make run-prd` e o pipeline removem automaticamente a instalação incompleta |
+| `Credenciais do SonarQube recusadas` | A palavra-passe do SonarQube foi alterada manualmente no painel | `make security SONAR_PASSWORD=<palavra-passe atual>`, ou `make clean-sonar` para recriar o servidor |
 | `401 Unauthorized` na autenticação, após atualizar o projeto | O Keycloak mantém as contas e permissões da versão anterior | `make reset-keycloak` no cluster; em DEV, `make clean-dev` e novo arranque |
 
 O Keycloak apenas importa as contas e permissões iniciais (`k8s/auth/realm-export.json`) no primeiro arranque. O comando `make reset-keycloak` repõe essa configuração e elimina as contas criadas manualmente.
@@ -383,7 +384,8 @@ As variáveis do `Makefile` podem ser definidas na linha de comandos, sem altera
 ├── k8s/                    auth/ (Keycloak) · observability/ · ingress/
 ├── scripts/                demo.py · get_token.py
 ├── docs/                   hld.png · hld.drawio
-├── docker-compose.yml      ambiente DEV
+├── docker-compose.yml      ambiente DEV · SonarQube (profile sonar)
+├── sonar-project.properties  configuração da análise SonarQube
 ├── requirements-prd.txt    dependências de execução
 ├── requirements-stg.txt    módulos de teste e de análise
 ├── requirements-dev.txt    conjunto dos anteriores

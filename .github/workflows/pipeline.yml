@@ -393,7 +393,32 @@ jobs:
           python-version: "3.12"
 
       - name: Testes de integração + smoke contra STG
-        run: make test-stg PYTHON=python KUBECTL="microk8s kubectl"
+        # Só os testes: o SonarQube já correu no job de segurança e PRD é preparado no passo seguinte
+        run: make integration-stg PYTHON=python KUBECTL="microk8s kubectl"
+
+      - name: Preparar PRD (Ingress controller e certificado TLS)
+        env:
+          PRD_HOST: ${{ vars.PRD_HOST || 'projeto-final.test' }}
+        run: |
+          set -euo pipefail
+          microk8s enable ingress
+          for ns in production auth; do
+            kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
+          done
+          if kubectl get secret projeto-final-tls -n production >/dev/null 2>&1; then
+            echo "Certificado TLS de PRD já existe."
+          else
+            umask 077
+            openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+              -keyout "$RUNNER_TEMP/tls.key" -out "$RUNNER_TEMP/tls.crt" \
+              -subj "/CN=$PRD_HOST" -addext "subjectAltName=DNS:$PRD_HOST" 2>/dev/null
+            for ns in production auth; do
+              kubectl create secret tls projeto-final-tls -n "$ns" \
+                --cert="$RUNNER_TEMP/tls.crt" --key="$RUNNER_TEMP/tls.key" \
+                --dry-run=client -o yaml | kubectl apply -f -
+            done
+            shred -u "$RUNNER_TEMP/tls.key" "$RUNNER_TEMP/tls.crt" 2>/dev/null || rm -f "$RUNNER_TEMP/tls.key" "$RUNNER_TEMP/tls.crt"
+          fi
 
       - name: Preparar PRD (Ingress controller e certificado TLS)
         env:

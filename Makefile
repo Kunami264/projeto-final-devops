@@ -158,7 +158,11 @@ image = $(IMAGE_REPO)/$(1):$(2)
 
 .PHONY: help \
 	build-dev run-dev test-dev demo-dev token-dev info-dev logs-dev stop-dev clean-dev \
+<<<<<<< HEAD
 	build-stg run-stg test-stg demo-stg forward-stg info-stg stop-stg clean-stg \
+=======
+	build-stg run-stg test-stg integration-stg prepare-prd demo-stg forward-stg info-stg stop-stg clean-stg \
+>>>>>>> 6638c3b (teste finaaal)
 	push-prd run-prd forward-prd status-prd info-prd stop-prd clean-prd \
 	kubeconfig run-infra reset-keycloak forward-infra clean-infra \
 	security sonar-up sonar-down clean-sonar \
@@ -434,7 +438,18 @@ info-stg: ## [STG] Mostra como aceder ao ambiente de Staging
 	@echo "  Grafana / Prometheus / Jaeger / Keycloak  make forward-infra"
 	@echo ""
 
+<<<<<<< HEAD
 test-stg: $(STAMP_STG) ## [STG] Testes de integração, smoke e de vulnerabilidades; se passarem, prepara PRD (promove imagens, instala certificado)
+=======
+test-stg: integration-stg ## [STG] Testes de integração, smoke e de vulnerabilidades; se passarem, prepara PRD (promove imagens, instala certificado)
+	@$(MAKE) --no-print-directory security
+	@echo "===== [STG] ✅ Staging validado — a preparar PRD ====="
+	@$(MAKE) --no-print-directory prepare-prd
+
+# Só os testes de integração e smoke contra o cluster. É o que o pipeline usa: lá a
+# análise de vulnerabilidades corre no job de segurança e PRD é preparado num passo próprio.
+integration-stg: $(STAMP_STG) ## [STG] Apenas os testes de integração e smoke contra Staging (sem preparar PRD)
+>>>>>>> 6638c3b (teste finaaal)
 	@echo "===== [STG] A abrir port-forwards e a executar os testes ====="
 	@$(call kill_ports,$(STG_PORTS)); \
 	trap '$(call kill_ports,$(STG_PORTS))' EXIT; \
@@ -450,9 +465,12 @@ test-stg: $(STAMP_STG) ## [STG] Testes de integração, smoke e de vulnerabilida
 	KEYCLOAK_BASE_URL=$(STG_KEYCLOAK_URL) \
 	KEYCLOAK_MGMT_URL=$(STG_KEYCLOAK_MGMT_URL) \
 	$(VENV_PY) -m pytest tests/integration/ tests/smoke/ -v
+<<<<<<< HEAD
 	@$(MAKE) --no-print-directory security
 	@echo "===== [STG] ✅ Staging validado — a preparar PRD ====="
 	@$(MAKE) --no-print-directory prepare-prd
+=======
+>>>>>>> 6638c3b (teste finaaal)
 
 prepare-prd: kubeconfig
 	@echo "===== [STG→PRD] Promoção das imagens validadas ($(STG_TAG) → $(PRD_TAG), sem novo build) ====="
