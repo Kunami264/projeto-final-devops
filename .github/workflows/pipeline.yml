@@ -35,9 +35,9 @@ jobs:
           echo "image_owner_repo=$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
 
   security-source:
-    name: Segurança — dependências e filesystem
+    name: Segurança — código e dependências
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Checkout do código
         uses: actions/checkout@v5
@@ -47,14 +47,21 @@ jobs:
         with:
           scan-type: fs
           scan-ref: .
-        env:
-          # os requirements têm sufixo de ambiente (requirements-prd/stg/dev.txt)
-          TRIVY_FILE_PATTERNS: 'pip:requirements-.*\.txt'
           scanners: vuln
           severity: HIGH,CRITICAL
           ignore-unfixed: true
           exit-code: "1"
           format: table
+        env:
+          TRIVY_FILE_PATTERNS: 'pip:requirements-.*\.txt'
+
+      - name: Configurar Python 3.12
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: SonarQube — vulnerabilidades no código
+        run: make security PYTHON=python
 
   security-images:
     name: Segurança — imagem (${{ matrix.service }})
@@ -216,7 +223,6 @@ jobs:
     name: Deploy DEV (Docker Compose)
     needs: test-unit
     if: github.ref == 'refs/heads/dev' && github.event_name == 'push'
-    # só o runner Linux (a VM com MicroK8s); um runner noutro sistema não serve
     runs-on: [self-hosted]
     environment: dev
     timeout-minutes: 10
@@ -226,9 +232,6 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      # O runner pode ter o Compose como plugin ("docker compose") ou como binário
-      # ("docker-compose"), e o plugin instalado só para um utilizador não é visto
-      # quando o runner corre como serviço com outro utilizador.
       - name: Detetar o comando do Docker Compose
         run: |
           if docker compose version >/dev/null 2>&1; then
@@ -281,7 +284,6 @@ jobs:
     name: Deploy STG + testes de validação
     needs: test-integration
     if: github.ref == 'refs/heads/stg' && github.event_name == 'push'
-    # só o runner Linux (a VM com MicroK8s); um runner noutro sistema não serve
     runs-on: [self-hosted]
     environment: staging
     timeout-minutes: 20
@@ -391,7 +393,32 @@ jobs:
           python-version: "3.12"
 
       - name: Testes de integração + smoke contra STG
-        run: make test-stg PYTHON=python KUBECTL="microk8s kubectl"
+        # Só os testes: o SonarQube já correu no job de segurança e PRD é preparado no passo seguinte
+        run: make integration-stg PYTHON=python KUBECTL="microk8s kubectl"
+
+      - name: Preparar PRD (Ingress controller e certificado TLS)
+        env:
+          PRD_HOST: ${{ vars.PRD_HOST || 'projeto-final.test' }}
+        run: |
+          set -euo pipefail
+          microk8s enable ingress
+          for ns in production auth; do
+            kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
+          done
+          if kubectl get secret projeto-final-tls -n production >/dev/null 2>&1; then
+            echo "Certificado TLS de PRD já existe."
+          else
+            umask 077
+            openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+              -keyout "$RUNNER_TEMP/tls.key" -out "$RUNNER_TEMP/tls.crt" \
+              -subj "/CN=$PRD_HOST" -addext "subjectAltName=DNS:$PRD_HOST" 2>/dev/null
+            for ns in production auth; do
+              kubectl create secret tls projeto-final-tls -n "$ns" \
+                --cert="$RUNNER_TEMP/tls.crt" --key="$RUNNER_TEMP/tls.key" \
+                --dry-run=client -o yaml | kubectl apply -f -
+            done
+            shred -u "$RUNNER_TEMP/tls.key" "$RUNNER_TEMP/tls.crt" 2>/dev/null || rm -f "$RUNNER_TEMP/tls.key" "$RUNNER_TEMP/tls.crt"
+          fi
 
       - name: Capturar evidência de observabilidade (STG)
         if: always()
@@ -515,11 +542,10 @@ jobs:
           kubectl apply -f k8s/auth/keycloak.yaml -f k8s/auth/networkpolicy.yaml
           kubectl -n auth rollout status deployment/keycloak --timeout=300s
 
-      - name: Aplicar stack de observabilidade (Prometheus, Jaeger, Grafana)
+      - name: Aplicar monitorização (Prometheus, Grafana)
         run: |
           set -euo pipefail
           kubectl apply \
-            -f k8s/observability/jaeger.yaml \
             -f k8s/observability/networkpolicy.yaml \
             -f k8s/observability/prometheus.yaml \
             -f k8s/observability/grafana.yaml
@@ -530,14 +556,17 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
 
           kubectl -n observability rollout status deployment/prometheus --timeout=90s
-          kubectl -n observability rollout status deployment/jaeger --timeout=90s
           kubectl -n observability rollout status deployment/grafana --timeout=90s
 
-      - name: Ponto de entrada HTTPS (Ingress controller + certificado TLS)
+      - name: Verificar pré-requisitos preparados em STG
         run: |
           set -euo pipefail
-          microk8s enable ingress
-          make tls-prd PRD_HOST="$PRD_HOST" KUBECTL="microk8s kubectl"
+          microk8s status -a ingress | grep -q enabled || {
+            echo "Ingress controller não ativo: o pipeline de stg tem de correr com sucesso antes de PRD."; exit 1; }
+          for ns in production auth; do
+            kubectl get secret projeto-final-tls -n "$ns" >/dev/null 2>&1 || {
+              echo "Certificado TLS em falta no namespace $ns: o pipeline de stg tem de correr com sucesso antes de PRD."; exit 1; }
+          done
           sed -e "s/__PRD_HOST__/$PRD_HOST/g" -e "s/__INGRESS_CLASS__/public/g" \
             k8s/ingress/keycloak-token-prd.yaml | kubectl apply -f -
 
@@ -581,23 +610,16 @@ jobs:
           microk8s config > kubeconfig-prd.yaml
           export KUBECONFIG="$PWD/kubeconfig-prd.yaml"
           PF_PROM=""
-          PF_JAEGER=""
-          cleanup() { kill "$PF_PROM" "$PF_JAEGER" 2>/dev/null || true; }
+          cleanup() { kill "$PF_PROM" 2>/dev/null || true; }
           trap cleanup EXIT
 
           echo "## Observabilidade — PRD" >> "$GITHUB_STEP_SUMMARY"
           kubectl port-forward -n observability svc/prometheus 29090:9090 >/dev/null 2>&1 & PF_PROM=$!
-          kubectl port-forward -n observability svc/jaeger 27686:16686 >/dev/null 2>&1 & PF_JAEGER=$!
           sleep 5
 
           echo "### Métricas — Prometheus" >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
           curl -fsS 'http://localhost:29090/api/v1/query?query=up' | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-          echo "### Traces recentes — service-orders (Jaeger)" >> "$GITHUB_STEP_SUMMARY"
-          echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          curl -fsS 'http://localhost:27686/api/traces?service=service-orders&limit=5&lookback=1h' | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
           echo "### Logs recentes — service-orders" >> "$GITHUB_STEP_SUMMARY"

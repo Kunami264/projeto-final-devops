@@ -5,8 +5,6 @@ SHELL := /bin/bash
 # VARIÁVEIS DE CONFIGURAÇÃO  (todas podem ser sobrepostas: make X VAR=valor)
 # ════════════════════════════════════════════════════════════════════
 
-# Usa o Python 3.12 (o mesmo das imagens Docker) se existir; senão o python3 do sistema.
-# As dependências estão validadas em Python 3.12 e 3.14.
 PYTHON          ?= $(shell command -v python3.12 2>/dev/null || echo python3)
 VENV_DIR        ?= .venv
 VENV_PY         := $(VENV_DIR)/bin/python
@@ -14,13 +12,8 @@ STAMP_DEV       := $(VENV_DIR)/.installed-dev
 STAMP_STG       := $(VENV_DIR)/.installed-stg
 
 DOCKER          ?= docker
-# Compose v2 como plugin ("docker compose") ou, se não existir, o binário "docker-compose".
 COMPOSE         ?= $(shell docker compose version >/dev/null 2>&1 && echo "docker compose" || echo "docker-compose")
 
-# Cluster Kubernetes para STG e PRD:
-#   microk8s — o ambiente de entrega (Linux);
-#   kind     — alternativa para máquinas sem MicroK8s (macOS/Windows), escolhida
-#              automaticamente quando o snap/microk8s não existe e o kind existe.
 CLUSTER         ?= $(shell if command -v snap >/dev/null 2>&1 || command -v microk8s >/dev/null 2>&1; then echo microk8s; elif command -v kind >/dev/null 2>&1; then echo kind; else echo microk8s; fi)
 KIND_CLUSTER    ?= dev
 MICROK8S        ?= sudo snap run microk8s
@@ -30,34 +23,38 @@ KUBECTL         ?= kubectl --context kind-$(KIND_CLUSTER)
 KUBECONFIG_CMD  ?= kind get kubeconfig --name $(KIND_CLUSTER)
 INGRESS_CLASS   ?= nginx
 INGRESS_NS      ?= ingress-nginx
-# No kind o Ingress não fica nas portas 80/443 da máquina: acede-se com make forward-prd.
 PRD_PORT        ?= 8443
 PRD_PORT_SUFFIX := :$(PRD_PORT)
 CLUSTER_HINT    := Criar o cluster: kind create cluster --name $(KIND_CLUSTER)
-# $(call load_image,<imagem>) / $(call unload_image,<imagem>)
+cluster_up       = kind get clusters 2>/dev/null | grep -qx $(KIND_CLUSTER) || { echo "✗ Cluster kind '$(KIND_CLUSTER)' não existe. $(CLUSTER_HINT)"; exit 1; };
+cluster_images   = $(DOCKER) exec $(KIND_CLUSTER)-control-plane ctr -n k8s.io images ls -q
+docker_containers = $(DOCKER) ps -a --format '{{.ID}} {{.Names}}' | grep -v ' $(KIND_CLUSTER)-control-plane$$' | cut -d' ' -f1
 load_image       = kind load docker-image $(1) --name $(KIND_CLUSTER)
 unload_image     = $(DOCKER) exec $(KIND_CLUSTER)-control-plane ctr -n k8s.io images rm $(1)
 enable_ingress   = $(HELM) upgrade --install ingress-nginx ingress-nginx --repo https://kubernetes.github.io/ingress-nginx -n $(INGRESS_NS) --create-namespace --set controller.service.type=NodePort --wait --timeout 5m
 disable_ingress  = $(HELM) uninstall ingress-nginx -n $(INGRESS_NS) --wait; $(KUBECTL) delete namespace $(INGRESS_NS) --ignore-not-found
-# $(call kill_ports,<portas>) — termina port-forwards presos a essas portas
 kill_ports       = { for p in $(1); do lsof -ti tcp:$$p | xargs kill; done; } >/dev/null 2>&1 || true
 else
 KUBECTL         ?= $(MICROK8S) kubectl
 INGRESS_CLASS   ?= public
 INGRESS_NS      ?= ingress
+PRD_PORT        ?= 443
 PRD_PORT_SUFFIX :=
-CLUSTER_HINT    := O MicroK8s está instalado e a correr?  sudo snap start microk8s && sudo microk8s status --wait-ready
+CLUSTER_HINT    := Ver o estado com: sudo microk8s status --wait-ready
+cluster_up       = if ! snap list microk8s >/dev/null 2>&1; then echo "✗ MicroK8s não está instalado: sudo snap install microk8s --classic"; exit 1; fi; \
+                   if ! $(MICROK8S) status --wait-ready --timeout 15 >/dev/null 2>&1; then \
+                     echo "===== [K8S] MicroK8s parado: a arrancar (pode demorar 1-2 minutos) ====="; \
+                     sudo snap start microk8s; $(MICROK8S) status --wait-ready --timeout 300 >/dev/null; \
+                   fi;
+cluster_images   = $(MICROK8S) ctr image ls -q
+docker_containers = $(DOCKER) ps -qa
 load_image       = $(DOCKER) save $(1) | $(MICROK8S) ctr image import -
 unload_image     = $(MICROK8S) ctr image rm $(1)
 enable_ingress   = $(MICROK8S) enable ingress
-disable_ingress  = true
+disable_ingress  = $(MICROK8S) disable ingress
 kill_ports       = { fuser -k $(foreach p,$(1),$(p)/tcp); sudo fuser -k $(foreach p,$(1),$(p)/tcp); } >/dev/null 2>&1 || true
 endif
 
-# O Helm não usa o kubectl do MicroK8s: precisa de um kubeconfig próprio. Sem ele
-# tenta http://localhost:8080 — que em DEV é o Keycloak — e falha com
-# "kubernetes cluster unreachable: the server could not find the requested resource".
-# Por isso o Makefile gera o kubeconfig a partir do cluster e passa-o sempre ao Helm.
 KUBECONFIG_FILE ?= kubeconfig-make.yaml
 KUBECONFIG_CMD  ?= $(MICROK8S) config
 HELM            ?= helm --kubeconfig $(KUBECONFIG_FILE)
@@ -65,12 +62,10 @@ HELM            ?= helm --kubeconfig $(KUBECONFIG_FILE)
 RELEASE         := projeto-final
 SERVICES        := service-users service-orders web
 
-# Imagens: a mesma imagem construída em STG é promovida (re-tag) para PRD.
 IMAGE_REPO      ?= ghcr.io/kunami264/projeto-final-devops
 STG_TAG         ?= stg
 PRD_TAG         ?= main
 
-# Namespaces Kubernetes
 NAMESPACE_STG   := staging
 NAMESPACE_PRD   := production
 NAMESPACE_AUTH  := auth
@@ -82,7 +77,16 @@ PRD_URL         := https://$(PRD_HOST)$(PRD_PORT_SUFFIX)
 TLS_SECRET      := projeto-final-tls
 CERT_DIR        := .certs
 
-# Credenciais de demonstração (definidas em k8s/auth/realm-export.json)
+SONAR_COMPOSE   := $(COMPOSE) --profile sonar
+SONAR_URL       ?= http://localhost:9500
+SONAR_USER      ?= admin
+SONAR_PASSWORD  ?= ProjetoFinal.2026
+SONAR_GATE      := Segurança
+SONAR_ARCH      := $(shell case "$$(uname -m)" in (aarch64|arm64) echo aarch64 ;; (*) echo x64 ;; esac)
+
+THIRD_PARTY_RE  := keycloak|postgres|prometheus|grafana|jaeger|busybox|ingress
+PIPELINE_COMPOSE_PROJECT := projeto-final-devops
+
 DEMO_USERNAME   ?= admin
 DEMO_PASSWORD   ?= admin
 TOKEN_PATH      := /realms/projeto-final/protocol/openid-connect/token
@@ -125,22 +129,39 @@ OBS_PORTS             := $(OBS_JAEGER_PORT) $(OBS_PROMETHEUS_PORT) $(OBS_GRAFANA
 # FUNÇÕES AUXILIARES
 # ════════════════════════════════════════════════════════════════════
 
-# $(call forward,<namespace>,<service>,<porta local>,<porta do service>)
 forward = $(KUBECTL) port-forward -n $(1) svc/$(2) $(3):$(4) >/dev/null 2>&1 &
-# $(call helm_unstick,<namespace>) — remove uma release que ficou sem nenhuma revisão
-# "deployed" (instalação anterior falhada/interrompida); sem isto o Helm recusa o
-# upgrade com "has no deployed releases". Os dados ficam no volume (resource-policy keep).
 helm_unstick = if $(HELM) status $(RELEASE) -n $(1) >/dev/null 2>&1 && ! $(HELM) history $(RELEASE) -n $(1) 2>/dev/null | grep -qw deployed; then echo "Release presa de uma tentativa anterior: a remover antes de instalar."; $(HELM) uninstall $(RELEASE) -n $(1) --wait; fi
-# $(call image,<service>,<tag>)
+define docker_prune
+	-$(DOCKER) system prune -af --volumes
+	-$(DOCKER) network prune -f
+	-$(DOCKER) builder prune -af
+endef
+
+cluster_clean_images = for img in $$($(cluster_images) 2>/dev/null | grep -E '$(1)' | grep -v '^sha256:'); do \
+		$(call unload_image,$$img) >/dev/null 2>&1 && echo "  removida do cluster: $$img" || true; \
+	done
+
+orphan_pvs = for pv in $$($(KUBECTL) get pv --no-headers 2>/dev/null | awk '$$6 ~ /^$(1)\// {print $$1}'); do \
+		$(KUBECTL) delete pv $$pv --wait=false && echo "  removido PV órfão: $$pv"; \
+	done
+
+define k8s_state
+	@echo "===== Estado após a limpeza ====="
+	-@$(KUBECTL) get all,pvc,secret,ingress -n $(1) 2>&1 | head -3
+	-@echo "  imagens do projeto no cluster: $$($(cluster_images) 2>/dev/null | grep -c '$(IMAGE_REPO)/' || true)"
+	-$(DOCKER) system df
+endef
+
 image = $(IMAGE_REPO)/$(1):$(2)
 
 .DEFAULT_GOAL := help
 
 .PHONY: help \
 	build-dev run-dev test-dev demo-dev token-dev info-dev logs-dev stop-dev clean-dev \
-	build-stg run-stg test-stg demo-stg forward-stg info-stg stop-stg clean-stg \
-	build-prd push-prd tls-prd run-prd forward-prd status-prd info-prd stop-prd clean-prd \
+	build-stg run-stg test-stg integration-stg prepare-prd demo-stg forward-stg info-stg stop-stg clean-stg \
+	push-prd run-prd forward-prd status-prd info-prd stop-prd clean-prd \
 	kubeconfig run-infra reset-keycloak forward-infra clean-infra \
+	security sonar-up sonar-down clean-sonar \
 	lint clean
 
 # ════════════════════════════════════════════════════════════════════
@@ -149,7 +170,8 @@ image = $(IMAGE_REPO)/$(1):$(2)
 
 help: ## Lista todos os comandos disponíveis
 	@echo ""
-	@echo "Fluxo:  build-dev → run-dev → test-dev   |   build-stg → run-stg → test-stg   |   build-prd → run-prd"
+	@echo "Fluxo:  build-dev → run-dev → test-dev   |   build-stg → run-stg → test-stg   |   run-prd"
+	@echo "        (PRD não constrói nem gera nada: usa as imagens e o certificado preparados e validados em STG)"
 	@echo ""
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 	awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -177,13 +199,15 @@ $(STAMP_STG): requirements-stg.txt | $(VENV_PY)
 # KUBERNETES — acesso do Helm ao cluster
 # ════════════════════════════════════════════════════════════════════
 
-kubeconfig: ## [K8S] Gera o kubeconfig que o Helm usa para falar com o cluster
-	@umask 077; \
-	if $(KUBECONFIG_CMD) > $(KUBECONFIG_FILE).tmp 2>/dev/null && [ -s $(KUBECONFIG_FILE).tmp ]; then \
-		mv $(KUBECONFIG_FILE).tmp $(KUBECONFIG_FILE); \
+kubeconfig: ## [K8S] Gera o kubeconfig que o Helm usa (arranca o MicroK8s se estiver parado)
+	@$(cluster_up) \
+	umask 077; \
+	if $(KUBECONFIG_CMD) > $(KUBECONFIG_FILE).tmp 2> $(KUBECONFIG_FILE).err && [ -s $(KUBECONFIG_FILE).tmp ]; then \
+		mv $(KUBECONFIG_FILE).tmp $(KUBECONFIG_FILE); rm -f $(KUBECONFIG_FILE).err; \
 	else \
-		rm -f $(KUBECONFIG_FILE).tmp; \
-		echo "✗ Não foi possível obter o kubeconfig do cluster ($(KUBECONFIG_CMD))."; \
+		echo "✗ Não foi possível obter o kubeconfig do cluster ($(KUBECONFIG_CMD)):"; \
+		sed 's/^/    /' $(KUBECONFIG_FILE).err; \
+		rm -f $(KUBECONFIG_FILE).tmp $(KUBECONFIG_FILE).err; \
 		echo "  $(CLUSTER_HINT)"; \
 		exit 1; \
 	fi
@@ -212,15 +236,65 @@ info-dev: ## [DEV] Mostra endereços e credenciais do ambiente local
 	@echo "  Grafana                     $(DEV_GRAFANA_URL)       admin / admin"
 	@echo "  Prometheus                  $(DEV_PROMETHEUS_URL)       sem login"
 	@echo "  Jaeger                      $(DEV_JAEGER_URL)      sem login"
+	@echo "  SonarQube (make security)   $(SONAR_URL)       $(SONAR_USER) / $(SONAR_PASSWORD)"
 	@echo ""
 	@echo "  Criar/editar/apagar clientes e encomendas: no site, ou make demo-dev (README, secção 6)"
 	@echo ""
 
-test-dev: $(STAMP_DEV) ## [DEV] Executa os testes unitários
+test-dev: $(STAMP_DEV) ## [DEV] Testes unitários e testes de vulnerabilidades do código (SonarQube)
 	@echo "===== [DEV] Testes unitários — service-users ====="
 	cd service-users && ../$(VENV_PY) -m pytest tests/ -v
 	@echo "===== [DEV] Testes unitários — service-orders ====="
 	cd service-orders && ../$(VENV_PY) -m pytest tests/ -v
+	@$(MAKE) --no-print-directory security
+
+security: sonar-up | $(VENV_PY) ## [DEV/STG] Testes de vulnerabilidades do código Python (SonarQube)
+	@echo "===== [SEGURANÇA] SonarQube — análise do código Python ====="
+	@[ -x $(VENV_DIR)/bin/pysonar ] || $(VENV_PY) -m pip install --quiet -r requirements-stg.txt
+	@TOKEN_NAME=make-$$(date +%s); \
+	TOKEN=$$(curl -fsS -u $(SONAR_USER):$(SONAR_PASSWORD) -X POST $(SONAR_URL)/api/user_tokens/generate -d name=$$TOKEN_NAME \
+		| $(VENV_PY) -c 'import json, sys; print(json.load(sys.stdin)["token"])'); \
+	trap "curl -fsS -u $(SONAR_USER):$(SONAR_PASSWORD) -X POST $(SONAR_URL)/api/user_tokens/revoke -d name=$$TOKEN_NAME >/dev/null" EXIT; \
+	$(VENV_DIR)/bin/pysonar --sonar-host-url $(SONAR_URL) --sonar-token "$$TOKEN" \
+		-Dsonar.scanner.arch=$(SONAR_ARCH) -Dsonar.qualitygate.wait=true
+
+sonar-up: ## [DEV/STG] Arranca o SonarQube local e configura o quality gate de segurança
+	@echo "===== [SONARQUBE] A arrancar o servidor ($(SONAR_URL)) ====="
+	@$(SONAR_COMPOSE) up -d --quiet-pull sonarqube
+	@for i in $$(seq 1 60); do \
+		curl -fsS $(SONAR_URL)/api/system/status 2>/dev/null | grep -q '"status":"UP"' && break; \
+		if [ $$i -eq 60 ]; then echo "✗ O SonarQube não ficou pronto em $(SONAR_URL)"; exit 1; fi; \
+		sleep 5; \
+	done
+	@if [ "$$(curl -s -o /dev/null -w '%{http_code}' -u admin:admin $(SONAR_URL)/api/user_tokens/search)" = 200 ] \
+		&& [ "$(SONAR_USER):$(SONAR_PASSWORD)" != "admin:admin" ]; then \
+		curl -fsS -u admin:admin -X POST $(SONAR_URL)/api/users/change_password \
+			-d login=admin -d previousPassword=admin --data-urlencode "password=$(SONAR_PASSWORD)"; \
+	fi
+	@if [ "$$(curl -s -o /dev/null -w '%{http_code}' -u $(SONAR_USER):$(SONAR_PASSWORD) $(SONAR_URL)/api/user_tokens/search)" != 200 ]; then \
+		echo "✗ Credenciais do SonarQube recusadas para '$(SONAR_USER)'. Indicar a password atual: make <target> SONAR_PASSWORD=..."; \
+		exit 1; \
+	fi
+	@if ! curl -fsS -o /dev/null -u $(SONAR_USER):$(SONAR_PASSWORD) -G $(SONAR_URL)/api/qualitygates/show \
+		--data-urlencode "name=$(SONAR_GATE)" 2>/dev/null; then \
+		curl -fsS -o /dev/null -u $(SONAR_USER):$(SONAR_PASSWORD) -X POST $(SONAR_URL)/api/qualitygates/create \
+			--data-urlencode "name=$(SONAR_GATE)"; \
+		curl -fsS -o /dev/null -u $(SONAR_USER):$(SONAR_PASSWORD) -X POST $(SONAR_URL)/api/qualitygates/create_condition \
+			--data-urlencode "gateName=$(SONAR_GATE)" -d metric=software_quality_security_issues -d op=GT -d error=0; \
+		curl -fsS -o /dev/null -u $(SONAR_USER):$(SONAR_PASSWORD) -X POST $(SONAR_URL)/api/qualitygates/set_as_default \
+			--data-urlencode "name=$(SONAR_GATE)"; \
+	fi
+
+sonar-down: ## [DEV/STG] Para o SonarQube (mantém as análises anteriores)
+	$(SONAR_COMPOSE) stop sonarqube
+
+clean-sonar: ## Remove o SonarQube: contentor, volumes (análises) e imagem
+	-$(SONAR_COMPOSE) rm -fsv sonarqube
+	-for v in sonarqube-data sonarqube-extensions sonarqube-logs; do \
+		$(DOCKER) volume ls -q --filter label=com.docker.compose.volume=$$v | xargs -r $(DOCKER) volume rm; \
+	done
+	-$(DOCKER) image ls -q sonarqube | xargs -r $(DOCKER) image rm
+	rm -rf .scannerwork
 
 demo-dev: ## [DEV] Cria, edita e apaga um utilizador e uma encomenda (ciclo completo)
 	@USERS_URL=$(DEV_USERS_URL) ORDERS_URL=$(DEV_ORDERS_URL) KEYCLOAK_BASE_URL=$(DEV_KEYCLOAK_URL) \
@@ -238,14 +312,23 @@ stop-dev: ## [DEV] Para os containers (mantém dados e imagens)
 	@echo "===== [DEV] A parar Docker Compose ====="
 	$(COMPOSE) down
 
-clean-dev: ## [DEV] Remove containers, volumes, imagens construídas, .venv e temporários
-	@echo "===== [CLEAN DEV] Containers, volumes, rede e imagens locais ====="
-	-$(COMPOSE) down --volumes --rmi local --remove-orphans
+clean-dev: ## [DEV] Limpeza Docker completa: compose down, stop, system/volume/network/builder prune, .venv e temporários
+	@echo "===== [CLEAN DEV] Docker Compose: contentores, volumes, imagens e órfãos ====="
+	-$(COMPOSE) -f docker-compose.yml down -v --rmi all --remove-orphans
+	-$(COMPOSE) -p $(PIPELINE_COMPOSE_PROJECT) down -v --rmi all --remove-orphans
+	@echo "===== [CLEAN DEV] Parar todos os contentores ====="
+	-$(DOCKER) stop $$($(docker_containers)) 2>/dev/null || true
+	@echo "===== [CLEAN DEV] Docker: imagens, contentores, volumes, redes e cache de build ====="
+	-$(DOCKER) system prune -af --volumes
+	-$(DOCKER) volume prune -af
+	-$(DOCKER) network prune -f
+	-$(DOCKER) builder prune -af
 	@echo "===== [CLEAN DEV] Ambiente virtual e ficheiros temporários ====="
 	rm -rf $(VENV_DIR) venv .pytest_cache .coverage htmlcov
 	find . -type d \( -name "__pycache__" -o -name ".pytest_cache" \) -prune -exec rm -rf {} +
 	find . -type f \( -name "*.pyc" -o -name "*.pid" -o -name "*.log" -o -name "*.db" \) -not -path "./.git/*" -delete
-	@echo "===== [CLEAN DEV] Concluído ✅ ====="
+	@echo "===== [CLEAN DEV] Espaço ocupado pelo Docker após a limpeza ====="
+	-$(DOCKER) system df
 
 # ════════════════════════════════════════════════════════════════════
 # INFRAESTRUTURA PARTILHADA NO CLUSTER — Keycloak + Observabilidade
@@ -292,30 +375,46 @@ forward-infra: ## [K8S] Port-forward de Grafana, Prometheus, Jaeger e Keycloak (
 	$(call forward,$(NAMESPACE_AUTH),keycloak,$(OBS_KEYCLOAK_PORT),8080) \
 	wait
 
-clean-infra: ## [K8S] Remove Keycloak e observabilidade (namespaces, PVCs, RBAC de cluster)
+clean-infra: ## [K8S] Remove Keycloak, monitorização, Ingress controller, RBAC de cluster e imagens de terceiros
 	@echo "===== [CLEAN K8S] Namespaces $(NAMESPACE_AUTH) e $(NAMESPACE_OBS) (inclui PVCs e Secrets) ====="
+	-@$(MAKE) --no-print-directory kubeconfig
 	-$(KUBECTL) delete namespace $(NAMESPACE_AUTH) $(NAMESPACE_OBS) --ignore-not-found --wait=true --timeout=180s
 	@echo "===== [CLEAN K8S] Recursos de cluster do Prometheus ====="
 	-$(KUBECTL) delete clusterrolebinding prometheus-scraper --ignore-not-found
 	-$(KUBECTL) delete clusterrole prometheus-scraper --ignore-not-found
-	-@$(MAKE) --no-print-directory kubeconfig >/dev/null 2>&1
-	-@$(disable_ingress) >/dev/null 2>&1
+	@echo "===== [CLEAN K8S] Ingress controller ====="
+	-$(disable_ingress)
+	@echo "===== [CLEAN K8S] Imagens de terceiros carregadas no cluster ====="
+	-@for img in $$($(cluster_images) 2>/dev/null | grep -E '$(THIRD_PARTY_RE)' | grep -v '^sha256:'); do \
+		$(call unload_image,$$img) >/dev/null 2>&1 && echo "  removida $$img" || true; \
+	done
 
 # ════════════════════════════════════════════════════════════════════
 # STG — MicroK8s + Helm  (ambiente onde se testa antes de promover para PRD)
 # ════════════════════════════════════════════════════════════════════
 
-build-stg: $(STAMP_STG) ## [STG] Constrói as imagens com os pacotes de PRD, carrega-as no cluster e instala requirements-stg.txt
+build-stg: $(STAMP_STG) ## [STG] Constrói as imagens (com os pacotes de PRD) e o certificado TLS de PRD
 	@for svc in $(SERVICES); do \
 		echo "===== [STG] A construir $(IMAGE_REPO)/$$svc:$(STG_TAG) ====="; \
 		$(DOCKER) build -t $(IMAGE_REPO)/$$svc:$(STG_TAG) ./$$svc; \
 		echo "===== [STG] A carregar a imagem no cluster ($(CLUSTER)) ====="; \
 		$(call load_image,$(IMAGE_REPO)/$$svc:$(STG_TAG)); \
 	done
+	@mkdir -p $(CERT_DIR)
+	@if [ ! -f $(CERT_DIR)/tls.crt ]; then \
+		echo "===== [STG] A gerar o certificado TLS de PRD ($(PRD_HOST)) ====="; \
+		openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+			-keyout $(CERT_DIR)/tls.key -out $(CERT_DIR)/tls.crt \
+			-subj "/CN=$(PRD_HOST)" -addext "subjectAltName=DNS:$(PRD_HOST)" 2>/dev/null; \
+		chmod 600 $(CERT_DIR)/tls.key; \
+	fi
 	$(HELM) lint ./helm -f ./helm/values-staging.yaml
+	$(HELM) lint ./helm -f ./helm/values-production.yaml
 	@echo "===== [STG] Build concluído ✅  (seguinte: make run-stg) ====="
 
-run-stg: kubeconfig run-infra ## [STG] Faz o deploy em Staging (Helm) e aguarda os workloads
+run-stg: kubeconfig run-infra ## [STG] Faz o deploy em Staging (Helm) e prepara o Ingress controller de PRD
+	@echo "===== [STG] Ingress controller (usado por PRD) ====="
+	$(enable_ingress)
 	@echo "===== [STG] Deploy via Helm ====="
 	@$(call helm_unstick,$(NAMESPACE_STG))
 	$(HELM) upgrade --install $(RELEASE) ./helm \
@@ -335,7 +434,14 @@ info-stg: ## [STG] Mostra como aceder ao ambiente de Staging
 	@echo "  Grafana / Prometheus / Jaeger / Keycloak  make forward-infra"
 	@echo ""
 
-test-stg: $(STAMP_STG) ## [STG] Testes de integração + smoke — validam Staging antes de promover para PRD
+test-stg: integration-stg ## [STG] Testes de integração, smoke e de vulnerabilidades; se passarem, prepara PRD (promove imagens, instala certificado)
+	@$(MAKE) --no-print-directory security
+	@echo "===== [STG] ✅ Staging validado — a preparar PRD ====="
+	@$(MAKE) --no-print-directory prepare-prd
+
+# Só os testes de integração e smoke contra o cluster. É o que o pipeline usa: lá a
+# análise de vulnerabilidades corre no job de segurança e PRD é preparado num passo próprio.
+integration-stg: $(STAMP_STG) ## [STG] Apenas os testes de integração e smoke contra Staging (sem preparar PRD)
 	@echo "===== [STG] A abrir port-forwards e a executar os testes ====="
 	@$(call kill_ports,$(STG_PORTS)); \
 	trap '$(call kill_ports,$(STG_PORTS))' EXIT; \
@@ -351,7 +457,23 @@ test-stg: $(STAMP_STG) ## [STG] Testes de integração + smoke — validam Stagi
 	KEYCLOAK_BASE_URL=$(STG_KEYCLOAK_URL) \
 	KEYCLOAK_MGMT_URL=$(STG_KEYCLOAK_MGMT_URL) \
 	$(VENV_PY) -m pytest tests/integration/ tests/smoke/ -v
-	@echo "===== [STG] ✅ Staging validado — pode promover para PRD (make build-prd) ====="
+
+prepare-prd: kubeconfig
+	@echo "===== [STG→PRD] Promoção das imagens validadas ($(STG_TAG) → $(PRD_TAG), sem novo build) ====="
+	@for svc in $(SERVICES); do \
+		$(DOCKER) image inspect $(IMAGE_REPO)/$$svc:$(STG_TAG) >/dev/null 2>&1 || { echo "✗ Falta a imagem $$svc:$(STG_TAG): make build-stg"; exit 1; }; \
+		$(DOCKER) tag $(IMAGE_REPO)/$$svc:$(STG_TAG) $(IMAGE_REPO)/$$svc:$(PRD_TAG); \
+		$(call load_image,$(IMAGE_REPO)/$$svc:$(PRD_TAG)); \
+	done
+	@echo "===== [STG→PRD] Certificado TLS de PRD no cluster ====="
+	@[ -f $(CERT_DIR)/tls.crt ] || { echo "✗ Falta o certificado em $(CERT_DIR): make build-stg"; exit 1; }
+	@for ns in $(NAMESPACE_PRD) $(NAMESPACE_AUTH); do \
+		$(KUBECTL) create namespace $$ns --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null; \
+		$(KUBECTL) create secret tls $(TLS_SECRET) -n $$ns \
+			--cert=$(CERT_DIR)/tls.crt --key=$(CERT_DIR)/tls.key \
+			--dry-run=client -o yaml | $(KUBECTL) apply -f -; \
+	done
+	@echo "===== [STG] ✅ PRD está pronto a subir: make run-prd ====="
 
 demo-stg: ## [STG] Cria, edita e apaga um utilizador e uma encomenda em Staging
 	@$(call kill_ports,$(STG_PORTS)); \
@@ -384,60 +506,47 @@ stop-stg: ## [STG] Remove a release de Staging (mantém namespace, imagens e inf
 	-@$(MAKE) --no-print-directory kubeconfig
 	-$(HELM) uninstall $(RELEASE) -n $(NAMESPACE_STG) --wait
 
-clean-stg: ## [STG] Remove release, namespace (PVCs, Secrets) e imagens de Staging
-	@echo "===== [CLEAN STG] Release Helm e namespace $(NAMESPACE_STG) ====="
+clean-stg: ## [STG] Limpeza completa de STG (lógica das aulas): release, namespace, PVs órfãos, imagens e cache Docker, certificado
+	@echo "===== [CLEAN STG] Parar e remover a aplicação (Helm) ====="
 	-@$(MAKE) --no-print-directory kubeconfig
 	-$(HELM) uninstall $(RELEASE) -n $(NAMESPACE_STG) --wait
+	@echo "===== [CLEAN STG] Namespace $(NAMESPACE_STG): pods, services, volumes (PVC), secrets, network policies ====="
 	-$(KUBECTL) delete namespace $(NAMESPACE_STG) --ignore-not-found --wait=true --timeout=180s
-	@echo "===== [CLEAN STG] Imagens (MicroK8s e Docker) ====="
-	@for svc in $(SERVICES); do \
-		$(call unload_image,$(IMAGE_REPO)/$$svc:$(STG_TAG)) >/dev/null 2>&1 || true; \
-		$(DOCKER) image rm -f $(IMAGE_REPO)/$$svc:$(STG_TAG) >/dev/null 2>&1 || true; \
+	@echo "===== [CLEAN STG] Volumes persistentes órfãos ====="
+	-@$(call orphan_pvs,$(NAMESPACE_STG))
+	@echo "===== [CLEAN STG] Imagens do projeto no cluster (todas as tags) ====="
+	-@$(call cluster_clean_images,$(IMAGE_REPO)/)
+	@echo "===== [CLEAN STG] Docker: imagens construídas em STG, contentores parados, redes e cache de build ====="
+	-@for img in $$($(DOCKER) images --format '{{.Repository}}:{{.Tag}}' | grep '^$(IMAGE_REPO)/'); do \
+		$(DOCKER) image rm -f $$img >/dev/null 2>&1 && echo "  removida do Docker: $$img" || true; \
 	done
+	$(docker_prune)
+	@echo "===== [CLEAN STG] Certificado TLS de PRD (gerado em STG) e port-forwards ====="
+	rm -rf $(CERT_DIR)
 	@$(call kill_ports,$(STG_PORTS))
+	$(call k8s_state,$(NAMESPACE_STG))
 
 # ════════════════════════════════════════════════════════════════════
 # PRD — MicroK8s + Helm + Ingress HTTPS
 # ════════════════════════════════════════════════════════════════════
 
-build-prd: ## [PRD] Promove as imagens validadas em STG (re-tag stg → main, sem reconstruir)
-	@for svc in $(SERVICES); do \
-		if ! $(DOCKER) image inspect $(IMAGE_REPO)/$$svc:$(STG_TAG) >/dev/null 2>&1; then \
-			echo "✗ Imagem $(IMAGE_REPO)/$$svc:$(STG_TAG) não existe."; \
-			echo "  PRD só promove o que foi construído e validado em STG: make build-stg run-stg test-stg"; \
-			exit 1; \
-		fi; \
-		echo "===== [PRD] A promover $$svc:$(STG_TAG) → $$svc:$(PRD_TAG) ====="; \
-		$(DOCKER) tag $(IMAGE_REPO)/$$svc:$(STG_TAG) $(IMAGE_REPO)/$$svc:$(PRD_TAG); \
-		$(call load_image,$(IMAGE_REPO)/$$svc:$(PRD_TAG)); \
-	done
-	$(HELM) lint ./helm -f ./helm/values-production.yaml
-	@echo "===== [PRD] Imagens prontas ✅  (seguinte: make run-prd) ====="
-
-push-prd: ## [PRD] (opcional) Publica as imagens de PRD no registry (requer docker login ghcr.io)
+push-prd: ## [PRD] (opcional) Publica no registry as imagens promovidas por STG (requer docker login ghcr.io)
 	@for svc in $(SERVICES); do \
 		$(DOCKER) push $(IMAGE_REPO)/$$svc:$(PRD_TAG); \
 	done
 
-tls-prd: ## [PRD] Gera o certificado TLS (self-signed) e cria o Secret no cluster
-	@mkdir -p $(CERT_DIR)
-	@if [ ! -f $(CERT_DIR)/tls.crt ]; then \
-		echo "===== [PRD] A gerar certificado self-signed para $(PRD_HOST) ====="; \
-		openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
-			-keyout $(CERT_DIR)/tls.key -out $(CERT_DIR)/tls.crt \
-			-subj "/CN=$(PRD_HOST)" -addext "subjectAltName=DNS:$(PRD_HOST)" 2>/dev/null; \
-		chmod 600 $(CERT_DIR)/tls.key; \
-	fi
-	@for ns in $(NAMESPACE_PRD) $(NAMESPACE_AUTH); do \
-		$(KUBECTL) create namespace $$ns --dry-run=client -o yaml | $(KUBECTL) apply -f -; \
-		$(KUBECTL) create secret tls $(TLS_SECRET) -n $$ns \
-			--cert=$(CERT_DIR)/tls.crt --key=$(CERT_DIR)/tls.key \
-			--dry-run=client -o yaml | $(KUBECTL) apply -f -; \
-	done
-
-run-prd: kubeconfig run-infra tls-prd ## [PRD] Faz o start em Produção (Helm + Ingress HTTPS) — sem build e sem testes
-	@echo "===== [PRD] A garantir o Ingress controller ====="
-	$(enable_ingress)
+run-prd: kubeconfig ## [PRD] Sobe Produção (Helm + Ingress HTTPS) com o que STG preparou
+	@echo "===== [PRD] Pré-requisitos preparados e validados em STG ====="
+	@ok=1; \
+	for svc in $(SERVICES); do \
+		$(DOCKER) image inspect $(IMAGE_REPO)/$$svc:$(PRD_TAG) >/dev/null 2>&1 || { echo "  ✗ imagem $$svc:$(PRD_TAG) em falta"; ok=0; }; \
+	done; \
+	for ns in $(NAMESPACE_PRD) $(NAMESPACE_AUTH); do \
+		$(KUBECTL) get secret $(TLS_SECRET) -n $$ns >/dev/null 2>&1 || { echo "  ✗ certificado TLS em falta no namespace $$ns"; ok=0; }; \
+	done; \
+	$(KUBECTL) get deployment keycloak -n $(NAMESPACE_AUTH) >/dev/null 2>&1 || { echo "  ✗ Keycloak não instalado"; ok=0; }; \
+	if [ $$ok = 0 ]; then echo "PRD não está preparado. Executar primeiro: make build-stg run-stg test-stg"; exit 1; fi; \
+	echo "  ✓ imagens, certificado e Keycloak presentes"
 	@echo "===== [PRD] Endpoint de token do Keycloak atrás do Ingress HTTPS ====="
 	sed -e 's/__PRD_HOST__/$(PRD_HOST)/g' -e 's/__INGRESS_CLASS__/$(INGRESS_CLASS)/g' \
 		k8s/ingress/keycloak-token-prd.yaml | $(KUBECTL) apply -f -
@@ -490,20 +599,29 @@ stop-prd: ## [PRD] Remove a release de Produção (mantém namespace, imagens e 
 	-@$(MAKE) --no-print-directory kubeconfig
 	-$(HELM) uninstall $(RELEASE) -n $(NAMESPACE_PRD) --wait
 
-clean-prd: ## [PRD] Remove release, namespace (PVCs, Secrets), Ingress, certificado e imagens de Produção
-	@echo "===== [CLEAN PRD] Release Helm e namespace $(NAMESPACE_PRD) ====="
+clean-prd: ## [PRD] Limpeza completa de PRD (lógica das aulas): release, namespace, PVs órfãos, Ingress, TLS, imagens, /etc/hosts
+	@echo "===== [CLEAN PRD] Parar e remover a aplicação (Helm) ====="
 	-@$(MAKE) --no-print-directory kubeconfig
 	-$(HELM) uninstall $(RELEASE) -n $(NAMESPACE_PRD) --wait
+	@echo "===== [CLEAN PRD] Namespace $(NAMESPACE_PRD): pods, services, volumes (PVC), secrets, Ingress, HPA ====="
 	-$(KUBECTL) delete namespace $(NAMESPACE_PRD) --ignore-not-found --wait=true --timeout=180s
+	@echo "===== [CLEAN PRD] Volumes persistentes órfãos ====="
+	-@$(call orphan_pvs,$(NAMESPACE_PRD))
 	@echo "===== [CLEAN PRD] Ingress do token e Secret TLS no namespace $(NAMESPACE_AUTH) ====="
 	-$(KUBECTL) delete ingress keycloak-token -n $(NAMESPACE_AUTH) --ignore-not-found
 	-$(KUBECTL) delete secret $(TLS_SECRET) -n $(NAMESPACE_AUTH) --ignore-not-found
-	rm -rf $(CERT_DIR)
-	@echo "===== [CLEAN PRD] Imagens (MicroK8s e Docker) ====="
-	@for svc in $(SERVICES); do \
-		$(call unload_image,$(IMAGE_REPO)/$$svc:$(PRD_TAG)) >/dev/null 2>&1 || true; \
-		$(DOCKER) image rm -f $(IMAGE_REPO)/$$svc:$(PRD_TAG) >/dev/null 2>&1 || true; \
+	@echo "===== [CLEAN PRD] Imagens promovidas para PRD ($(PRD_TAG)) no cluster e no Docker ====="
+	-@$(call cluster_clean_images,$(IMAGE_REPO)/.*:$(PRD_TAG)$$)
+	-@for img in $$($(DOCKER) images --format '{{.Repository}}:{{.Tag}}' | grep -E '^$(IMAGE_REPO)/.*:$(PRD_TAG)$$'); do \
+		$(DOCKER) image rm -f $$img >/dev/null 2>&1 && echo "  removida do Docker: $$img" || true; \
 	done
+	$(docker_prune)
+	@echo "===== [CLEAN PRD] Entrada $(PRD_HOST) no /etc/hosts e port-forwards ====="
+	-@if grep -qE '[[:space:]]$(PRD_HOST)([[:space:]]|$$)' /etc/hosts; then \
+		sudo sed -i.bak -E '/[[:space:]]$(PRD_HOST)([[:space:]]|$$)/d' /etc/hosts && sudo rm -f /etc/hosts.bak && echo "  removida"; \
+	else echo "  não existe"; fi
+	@$(call kill_ports,$(PRD_PORT))
+	$(call k8s_state,$(NAMESPACE_PRD))
 
 # ════════════════════════════════════════════════════════════════════
 # GERAL
@@ -514,12 +632,15 @@ lint: ## Valida o Helm chart com os values de cada ambiente
 	$(HELM) lint ./helm -f ./helm/values-staging.yaml
 	$(HELM) lint ./helm -f ./helm/values-production.yaml
 
-clean: clean-prd clean-stg clean-infra clean-dev ## Limpa TUDO: PRD, STG, infraestrutura do cluster e DEV
-	@rm -f $(KUBECONFIG_FILE)
+clean: clean-prd clean-stg clean-infra clean-dev clean-sonar ## Limpa TUDO: PRD, STG, infraestrutura do cluster, DEV e SonarQube
+	@rm -f $(KUBECONFIG_FILE).tmp $(KUBECONFIG_FILE).err kubeconfig-*.yaml
 	@$(call kill_ports,$(OBS_PORTS))
 	@echo ""
 	@echo "===== [CLEAN] Tudo removido ✅ ====="
 	@echo "  Cluster: releases Helm, namespaces $(NAMESPACE_PRD)/$(NAMESPACE_STG)/$(NAMESPACE_AUTH)/$(NAMESPACE_OBS),"
-	@echo "           PVCs, Secrets, Ingress, ClusterRole/Binding e imagens importadas."
-	@echo "  Local:   containers, volumes, rede e imagens do Compose, $(VENV_DIR), $(CERT_DIR), caches e *.db."
+	@echo "           PVCs, Secrets, Ingress e Ingress controller, ClusterRole/Binding,"
+	@echo "           imagens do projeto e imagens de terceiros carregadas no cluster."
+	@echo "  Docker:  todos os contentores parados; imagens, volumes, redes e cache de build removidos"
+	@echo "           (docker system prune -af --volumes, volume/network/builder prune)."
+	@echo "  Local:   $(VENV_DIR), $(CERT_DIR), ficheiros kubeconfig-*.yaml, caches, *.db, port-forwards e a entrada no /etc/hosts."
 	@echo "  (O cluster $(CLUSTER) continua instalado.)"

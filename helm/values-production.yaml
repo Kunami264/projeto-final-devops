@@ -53,3 +53,6 @@ postgres:
 podDisruptionBudget:
   enabled: true
   minAvailable: 1
+
+observability:
+  enableTracing: false

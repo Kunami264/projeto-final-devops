@@ -26,8 +26,11 @@ def main() -> None:
 
     if args.base_url:
         args.users_url = args.orders_url = args.keycloak_url = args.base_url.rstrip("/")
+    for url in (args.users_url, args.orders_url, args.keycloak_url):
+        if urllib.parse.urlparse(url).scheme not in ("http", "https"):
+            sys.exit(f"Endereço inválido (só http/https): {url}")
 
-    context = ssl._create_unverified_context() if args.insecure else None
+    context = ssl._create_unverified_context() if args.insecure else None  # NOSONAR
 
     def call(method: str, url: str, token: str | None = None, body: dict | None = None, form: dict | None = None):
         headers = {}

@@ -191,7 +191,6 @@ def test_backoffice_login_and_crud_through_its_own_address():
         r = httpx.delete(f"{WEB_URL}/users/{user_id}", headers=headers, timeout=10)
     assert r.status_code == 204
 
-    # a sessão renova-se sem voltar a pedir a password
     r = httpx.post(token_url, data={"grant_type": "refresh_token", "client_id": "backoffice", "refresh_token": refresh_token}, timeout=10)
     assert r.status_code == 200
 
