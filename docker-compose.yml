@@ -17,8 +17,6 @@ services:
 
   keycloak:
     image: quay.io/keycloak/keycloak:26.0
-    # O login da consola admin usa o realm master: o Frontend URL desse realm aponta
-    # para KC_HOSTNAME_ADMIN (o realm projeto-final mantém o issuer de KC_HOSTNAME)
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
@@ -33,7 +31,6 @@ services:
       - KEYCLOAK_ADMIN=admin
       - KEYCLOAK_ADMIN_PASSWORD=admin
       - KC_HOSTNAME=http://keycloak:8080
-      # A consola admin é aberta no browser do host, que não resolve "keycloak"
       - KC_HOSTNAME_ADMIN=http://localhost:8080
       - KC_HTTP_ENABLED=true
       - KC_HOSTNAME_STRICT=false
@@ -157,6 +154,18 @@ services:
     depends_on:
       - prometheus
 
+  sonarqube:
+    image: sonarqube:26.9.0.129388-community
+    profiles: ["sonar"]
+    environment:
+      - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true
+    ports:
+      - "9500:9000"
+    volumes:
+      - sonarqube-data:/opt/sonarqube/data
+      - sonarqube-extensions:/opt/sonarqube/extensions
+      - sonarqube-logs:/opt/sonarqube/logs
+
 networks:
   app-network:
     driver: bridge
@@ -166,3 +175,6 @@ volumes:
   keycloak-data:
   prometheus-data:
   grafana-data:
+  sonarqube-data:
+  sonarqube-extensions:
+  sonarqube-logs:

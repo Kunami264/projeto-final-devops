@@ -41,7 +41,7 @@ A plataforma destina-se a organizações que necessitam de registar os seus clie
 |---|---|---|
 | **DEV** | Docker Compose | Desenvolvimento e testes unitários |
 | **STG** | Kubernetes (MicroK8s), *namespace* `staging` | Validação: testes de integração e *smoke*. Apenas o que é aprovado neste ambiente segue para produção |
-| **PRD** | Kubernetes (MicroK8s), *namespace* `production` | Exploração, em HTTPS. Não se constroem imagens nem se executam testes neste ambiente |
+| **PRD** | Kubernetes (MicroK8s), *namespace* `production` | Exploração, em HTTPS. Nada é construído nem gerado neste ambiente e não se executam testes: apenas se sobe o que STG preparou e validou |
 
 ---
 
@@ -49,7 +49,7 @@ A plataforma destina-se a organizações que necessitam de registar os seus clie
 
 ![Arquitetura (HLD)](docs/hld.png)
 
-O diagrama editável encontra-se em `docs/hld.drawio`.
+O diagrama editável encontra-se em `docs/hld.drawio`. O processo de implementação, as decisões de design e as ferramentas e bibliotecas utilizadas estão descritos no documento `Passo 8.md`, entregue juntamente com o projeto.
 
 | Componente | Função |
 |---|---|
@@ -60,7 +60,8 @@ O diagrama editável encontra-se em `docs/hld.drawio`.
 | **Keycloak** | Autenticação e autorização (OIDC/JWT) |
 | **Prometheus** | Recolha de métricas |
 | **Grafana** | Painéis e alertas |
-| **Jaeger** | Rastreio distribuído (OpenTelemetry) |
+| **Jaeger** | Rastreio distribuído (OpenTelemetry), apenas em DEV e STG |
+| **SonarQube** | Análise de vulnerabilidades do código Python (servidor local em Docker) |
 
 Em STG e PRD, o Keycloak e as ferramentas de monitorização residem em *namespaces* próprios (`auth` e `observability`) e são partilhados pelos dois ambientes.
 
@@ -104,7 +105,7 @@ Todas as operações são realizadas através do `make`. Cada ambiente segue a m
 ```text
 DEV:  make build-dev → make run-dev → make test-dev
 STG:  make build-stg → make run-stg → make test-stg
-PRD:  make build-prd → make run-prd
+PRD:  make run-prd
 ```
 
 A lista completa de comandos é apresentada por `make help`.
@@ -115,7 +116,7 @@ A lista completa de comandos é apresentada por `make help`.
 |---|---|---|
 | 1. Construção | `make build-dev` | Cria o ambiente virtual Python (`.venv`) e constrói as imagens Docker |
 | 2. Arranque | `make run-dev` | Inicia todos os serviços e apresenta os endereços e as credenciais |
-| 3. Testes | `make test-dev` | Executa os testes unitários |
+| 3. Testes | `make test-dev` | Executa os testes unitários e os testes de vulnerabilidades do código (SonarQube) |
 | 4. Demonstração (opcional) | `make demo-dev` | Autentica-se e cria, edita e apaga um cliente e uma encomenda |
 | 5. Paragem | `make stop-dev` | Para os serviços, mantendo os dados |
 
@@ -123,11 +124,13 @@ Após o arranque, o site de gestão fica disponível em <http://localhost:8000>.
 
 ### 4.2 STG
 
+STG é o ambiente onde tudo é construído, gerado e validado. Só o que é aprovado aqui segue para PRD.
+
 | Passo | Comando | Resultado |
 |---|---|---|
-| 1. Construção | `make build-stg` | Constrói as imagens com todas as dependências de produção instaladas, carrega-as no cluster e instala no `.venv` os módulos de teste |
-| 2. Arranque | `make run-stg` | Instala o Keycloak, as ferramentas de monitorização e a aplicação |
-| 3. Validação | `make test-stg` | Executa os testes de integração e *smoke*. A promoção para PRD só deve ocorrer se forem aprovados |
+| 1. Construção | `make build-stg` | Constrói as imagens com todas as dependências de produção instaladas, carrega-as no cluster, gera o certificado TLS de PRD e instala no `.venv` os módulos de teste |
+| 2. Arranque | `make run-stg` | Instala o Keycloak, as ferramentas de monitorização, o Ingress controller e a aplicação |
+| 3. Validação | `make test-stg` | Executa os testes de integração, *smoke* e de vulnerabilidades do código. Se forem aprovados, prepara PRD: promove as imagens (`stg` → `main`, sem novo *build*) e instala o certificado TLS no cluster |
 | 4. Demonstração (opcional) | `make demo-stg` | Cria, edita e apaga um cliente e uma encomenda |
 
 STG não é exposto para o exterior do cluster. O acesso faz-se por *port-forward*, mantendo em execução num terminal:
@@ -140,13 +143,13 @@ O site de gestão fica então disponível em <http://localhost:8100>.
 
 ### 4.3 PRD
 
-Em produção não se constroem imagens nem se executam testes: a imagem validada em STG é promovida e apenas iniciada, o que torna o arranque rápido e garante que é executado exatamente o que foi testado.
+Em produção nada é construído nem gerado e não se executam testes: apenas se sobe o ambiente com as imagens e o certificado preparados e validados em STG. O arranque é rápido e executa exatamente o que foi testado. O rastreio distribuído (OpenTelemetry) não está ativo em PRD.
 
 | Passo | Comando | Resultado |
 |---|---|---|
-| 1. Promoção | `make build-prd` | Promove as imagens de STG, sem as reconstruir. Se não existirem, o comando termina com erro e indica os passos de STG em falta |
-| 2. Arranque | `make run-prd` | Gera o certificado TLS, ativa o ponto de entrada HTTPS e inicia a aplicação |
-| 3. Verificação | `make status-prd` | Apresenta as réplicas, os *health-checks*, o escalonamento automático e o Ingress |
+| 1. Arranque | `make run-prd` | Confirma que STG preparou PRD (imagens, certificado e Keycloak) e sobe a aplicação com o ponto de entrada HTTPS. Se faltar algum pré-requisito, termina com erro e indica os passos de STG a executar |
+| 2. Verificação | `make status-prd` | Apresenta as réplicas, os *health-checks*, o escalonamento automático e o Ingress |
+| 3. Publicação (opcional) | `make push-prd` | Publica no registo (GHCR) as imagens promovidas por STG |
 
 O site responde no endereço `projeto-final.test`, que deve ser associado à máquina do cluster (uma única vez):
 
@@ -172,10 +175,11 @@ Sempre que é solicitada autenticação: utilizador **`admin`**, palavra-passe *
 | **Site de gestão** | <http://localhost:8000> | <http://localhost:8100> | <https://projeto-final.test/> |
 | **Grafana** | <http://localhost:3000> | <http://localhost:3100> | <http://localhost:3100> |
 | **Prometheus** | <http://localhost:9090> | <http://localhost:9190> | <http://localhost:9190> |
-| **Jaeger** | <http://localhost:16686> | <http://localhost:17686> | <http://localhost:17686> |
+| **Jaeger** | <http://localhost:16686> | <http://localhost:17686> | — (sem rastreio em PRD) |
 | **Keycloak** (administração) | <http://localhost:8080> | <http://localhost:8280> | <http://localhost:8280> |
+| **SonarQube** | <http://localhost:9500> | <http://localhost:9500> | — |
 
-- O site de gestão, o Grafana e o Keycloak exigem autenticação. O Prometheus e o Jaeger não dispõem de ecrã de autenticação.
+- O site de gestão, o Grafana, o Keycloak e o SonarQube exigem autenticação. O SonarQube é iniciado por `make security` (ou `make sonar-up`) e usa o utilizador **`admin`** com a palavra-passe **`ProjetoFinal.2026`**, definida na primeira execução. O Prometheus e o Jaeger não dispõem de ecrã de autenticação.
 - Em STG e PRD, as ferramentas de monitorização e a administração do Keycloak não são expostas para o exterior do cluster; o acesso faz-se exclusivamente através de `make forward-infra`. Por serem partilhadas, os endereços coincidem nos dois ambientes.
 - As credenciais indicadas são de demonstração e devem ser alteradas antes de qualquer utilização com dados reais (secção 11).
 
@@ -242,7 +246,7 @@ Para que existam dados, deve utilizar-se previamente o site ou executar `make de
 |---|---|---|
 | **Grafana** | *Dashboards* → *service-users / service-orders — visão geral* | Pedidos por segundo, taxa de erros, tempos de resposta (mediana e percentil 95) e pedidos por operação. Em *Alerting* → *Alert rules* encontram-se três alertas: taxa de erros elevada, respostas lentas e serviço indisponível |
 | **Prometheus** | *Status* → *Targets* | Estado da recolha de métricas; os dois serviços devem apresentar o estado `UP` |
-| **Jaeger** | Selecionar o serviço `service-orders` e *Find Traces* | Percurso de cada pedido entre os dois serviços, com a duração de cada etapa e a identificação de erros |
+| **Jaeger** (DEV e STG) | Selecionar o serviço `service-orders` e *Find Traces* | Percurso de cada pedido entre os dois serviços, com a duração de cada etapa e a identificação de erros |
 
 Exemplo de consulta no Prometheus:
 
@@ -257,13 +261,13 @@ sum(rate(http_requests_total[5m])) by (service)
 | Comando | Efeito |
 |---|---|
 | `make stop-dev`, `make stop-stg`, `make stop-prd` | Para o ambiente, preservando os dados e as imagens |
-| `make clean-dev` | Remove contentores, volumes, rede e imagens do Compose, o `.venv` e os ficheiros temporários. **Elimina os dados** |
-| `make clean-stg` | Remove a aplicação, o *namespace* `staging` e as imagens de STG. **Elimina os dados** |
-| `make clean-prd` | Remove a aplicação, o *namespace* `production`, o certificado e as imagens de PRD. **Elimina os dados** |
-| `make clean-infra` | Remove o Keycloak e as ferramentas de monitorização do cluster |
-| `make clean` | Executa todas as limpezas anteriores |
+| `make clean-dev` | Limpeza Docker completa: `docker compose down -v --rmi all --remove-orphans`, paragem de todos os contentores, `docker system prune -af --volumes`, `volume prune`, `network prune` e `builder prune`; remove ainda o `.venv` e os ficheiros temporários e apresenta `docker system df`. **Elimina os dados** |
+| `make clean-stg` | Remove a aplicação e o *namespace* `staging`, todas as imagens do projeto (no cluster e no Docker) e o certificado gerado em STG. **Elimina os dados** |
+| `make clean-prd` | Remove a aplicação, o *namespace* `production`, o Ingress do Keycloak, o Secret TLS e a entrada `projeto-final.test` do `/etc/hosts`. **Elimina os dados** |
+| `make clean-infra` | Remove o Keycloak, a monitorização, o Ingress controller, o RBAC de cluster do Prometheus e as imagens de terceiros carregadas no cluster |
+| `make clean` | Executa todas as limpezas anteriores e remove os ficheiros de acesso ao cluster (`kubeconfig-*.yaml`) e os *port-forwards* ativos |
 
-Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na máquina. O MicroK8s permanece instalado.
+Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na máquina; permanece apenas o MicroK8s instalado. **Atenção:** `make clean-dev` (incluído em `make clean`) para e remove todos os contentores, imagens e volumes Docker da máquina, e não apenas os deste projeto. Em cluster kind, o nó do cluster é preservado. A remoção da entrada do `/etc/hosts` pede a palavra-passe de administrador.
 
 ---
 
@@ -271,7 +275,8 @@ Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na m
 
 | Mensagem | Causa | Resolução |
 |---|---|---|
-| `Não foi possível obter o kubeconfig do cluster` | O cluster não está em execução | `sudo snap start microk8s` e `sudo microk8s status --wait-ready` |
+| `Não foi possível obter o kubeconfig do cluster` | O MicroK8s não está instalado ou não arrancou | Os comandos `make` arrancam automaticamente o MicroK8s quando está parado e apresentam o erro devolvido. Se não estiver instalado: `sudo snap install microk8s --classic` |
+| `PRD não está preparado` ao executar `make run-prd` | Os passos de STG não foram executados | `make build-stg`, `make run-stg` e `make test-stg` |
 | `kubernetes cluster unreachable` ao utilizar o `helm` diretamente | O Helm não tem indicação do cluster a utilizar | Executar `make kubeconfig` e acrescentar `--kubeconfig kubeconfig-make.yaml` ao comando. Os comandos `make` fazem-no automaticamente |
 | `UPGRADE FAILED: "projeto-final" has no deployed releases` | Uma instalação anterior foi interrompida | Os comandos `make run-stg` e `make run-prd` e o pipeline removem automaticamente a instalação incompleta |
 | `401 Unauthorized` na autenticação, após atualizar o projeto | O Keycloak mantém as contas e permissões da versão anterior | `make reset-keycloak` no cluster; em DEV, `make clean-dev` e novo arranque |
@@ -287,12 +292,12 @@ O Keycloak apenas importa as contas e permissões iniciais (`k8s/auth/realm-expo
 | Ficheiro | Ambiente | Conteúdo |
 |---|---|---|
 | `requirements-prd.txt` | PRD | Apenas as dependências de execução. É o único conjunto instalado nas imagens Docker |
-| `requirements-stg.txt` | STG | Módulos de teste (`pytest`, `httpx`) para os testes de integração e *smoke* |
+| `requirements-stg.txt` | STG | Módulos de teste e de análise (`pytest`, `httpx`, `pysonar`) para os testes de integração, *smoke* e de vulnerabilidades |
 | `requirements-dev.txt` | DEV | Reúne os dois anteriores |
 
 Cada serviço dispõe de `requirements-prd.txt` (instalado pelo respetivo `Dockerfile`) e de `requirements-dev.txt`. O ambiente virtual é criado com `python -m venv .venv` pelos comandos `build-dev` e `build-stg`.
 
-A imagem é construída uma única vez, em `build-stg`, com as dependências de produção. Os módulos de teste permanecem no `.venv`, fora da imagem. `build-prd` promove a mesma imagem (`stg` → `main`) e `run-prd` limita-se a iniciá-la.
+A imagem é construída uma única vez, em `build-stg`, com as dependências de produção. Os módulos de teste permanecem no `.venv`, fora da imagem. `test-stg`, se os testes forem aprovados, promove a mesma imagem (`stg` → `main`) e `run-prd` limita-se a iniciá-la.
 
 ### 10.2 Testes
 
@@ -304,15 +309,19 @@ A imagem é construída uma única vez, em `build-stg`, com as dependências de 
 | *Smoke* | STG | `tests/smoke` | 3 |
 | **Total** | | | **57** |
 
+Os testes de vulnerabilidades complementam os anteriores: o **SonarQube** analisa o código Python (`make security`, incluído em `make test-dev` e `make test-stg`) e o **Trivy** analisa as dependências e as imagens no pipeline.
+
+O `make security` inicia um SonarQube local em Docker (serviço `sonarqube` do `docker-compose.yml`, no *profile* `sonar`, que o `make run-dev` não arranca), aplica o *quality gate* **Segurança** e analisa o código com o `pysonar`. O comando falha se existir qualquer problema de segurança no código; os problemas de manutenção ficam registados no painel, sem bloquear. Uma linha assinalada com `# NOSONAR` é excluída da análise, o que se aplica apenas a situações intencionais (a opção `--insecure` de `scripts/demo.py`, para o certificado autoassinado de PRD). `make sonar-down` para o servidor, mantendo as análises; `make clean-sonar` remove-o.
+
 ### 10.3 Pipeline de entrega contínua
 
 O pipeline (`.github/workflows/pipeline.yml`, GitHub Actions) acompanha a promoção entre os ramos `dev`, `stg` e `main`:
 
 | Ramo | Etapas |
 |---|---|
-| `dev` | Análise de segurança (Trivy) → construção e publicação das imagens → testes unitários → *deploy* em DEV |
-| `stg` | Análise de segurança → construção e publicação → testes de integração → *deploy* em STG → testes de integração e *smoke* contra o cluster |
-| `main` | Análise de segurança → promoção da imagem de STG, sem nova construção → aprovação manual → *deploy* em PRD com HTTPS → verificação dos *health-checks* |
+| `dev` | Testes de vulnerabilidades (SonarQube, Trivy) → construção e publicação das imagens → testes unitários → *deploy* em DEV |
+| `stg` | Testes de vulnerabilidades → construção e publicação → testes de integração → *deploy* em STG → testes de integração e *smoke* contra o cluster → preparação de PRD (Ingress controller e certificado TLS) |
+| `main` | Testes de vulnerabilidades → promoção da imagem de STG no registo, sem nova construção → aprovação manual → verificação dos pré-requisitos preparados em STG → *deploy* em PRD com HTTPS → verificação dos *health-checks* |
 
 A análise, a construção e os testes decorrem na infraestrutura do GitHub. Os *deploys* são executados por um *runner self-hosted*, instalado na máquina que aloja o Docker e o MicroK8s. As imagens são publicadas no GitHub Container Registry. A limpeza dos ambientes é desencadeada manualmente (`.github/workflows/cleanup.yml`).
 
@@ -376,7 +385,7 @@ As variáveis do `Makefile` podem ser definidas na linha de comandos, sem altera
 ├── docs/                   hld.png · hld.drawio
 ├── docker-compose.yml      ambiente DEV
 ├── requirements-prd.txt    dependências de execução
-├── requirements-stg.txt    módulos de teste
+├── requirements-stg.txt    módulos de teste e de análise
 ├── requirements-dev.txt    conjunto dos anteriores
 └── Makefile                ponto de entrada
 ```

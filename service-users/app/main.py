@@ -23,24 +23,21 @@ ENABLE_TRACING = os.getenv("ENABLE_TRACING", "false").lower() == "true"
 
 logger = configure_logging(SERVICE_NAME)
 
-resource = Resource.create({"service.name": SERVICE_NAME})
-provider = TracerProvider(resource=resource)
-
 if ENABLE_TRACING:
+    provider = TracerProvider(resource=Resource.create({"service.name": SERVICE_NAME}))
     try:
-        otlp_exporter = OTLPSpanExporter(endpoint=OTLP_ENDPOINT, insecure=True)
-        provider.add_span_processor(BatchSpanProcessor(otlp_exporter))
+        provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=OTLP_ENDPOINT, insecure=True)))
     except Exception as exc:
         logger.warning("Não foi possível configurar o exporter OTLP: %s", exc)
-
-trace.set_tracer_provider(provider)
+    trace.set_tracer_provider(provider)
 
 app = FastAPI(
     title="service-users",
     description="Microsserviço de gestão de utilizadores",
     version="1.3.0",
 )
-FastAPIInstrumentor.instrument_app(app)
+if ENABLE_TRACING:
+    FastAPIInstrumentor.instrument_app(app)
 
 
 Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
@@ -161,8 +158,3 @@ def delete_user(
     logger.info("Utilizador %d apagado por '%s'", user_id, claims.subject)
     return Response(status_code=204)
 
-
-if __name__ == "__main__":
-    import uvicorn
-
-    uvicorn.run(app, host="0.0.0.0", port=8002)

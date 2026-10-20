@@ -27,3 +27,4 @@ Thumbs.db
 kubeconfig-*.yaml
 .certs/
 secret-values.yaml
+.scannerwork/

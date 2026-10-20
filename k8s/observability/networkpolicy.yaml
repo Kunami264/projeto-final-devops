@@ -42,9 +42,6 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: staging
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: production
       ports:
         - port: 4317
 ---
