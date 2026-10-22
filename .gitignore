@@ -21,7 +21,7 @@ htmlcov/
 *.swp
 .DS_Store
 Thumbs.db
-*.drawio.bkp
+*.bkp
 
 *.db
 kubeconfig-*.yaml

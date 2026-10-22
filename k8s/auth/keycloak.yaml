@@ -301,6 +301,14 @@ spec:
               readOnly: true
             - name: keycloak-data
               mountPath: /opt/keycloak/data/h2
+          # O primeiro arranque (importação do realm) pode demorar vários minutos numa VM
+          # com poucos recursos: até 10 min de tolerância antes de o liveness atuar.
+          startupProbe:
+            httpGet:
+              path: /health/started
+              port: 9000
+            periodSeconds: 10
+            failureThreshold: 60
           readinessProbe:
             httpGet:
               path: /health/ready

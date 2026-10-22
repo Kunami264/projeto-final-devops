@@ -33,6 +33,8 @@ load_image       = kind load docker-image $(1) --name $(KIND_CLUSTER)
 unload_image     = $(DOCKER) exec $(KIND_CLUSTER)-control-plane ctr -n k8s.io images rm $(1)
 enable_ingress   = $(HELM) upgrade --install ingress-nginx ingress-nginx --repo https://kubernetes.github.io/ingress-nginx -n $(INGRESS_NS) --create-namespace --set controller.service.type=NodePort --wait --timeout 5m
 disable_ingress  = $(HELM) uninstall ingress-nginx -n $(INGRESS_NS) --wait; $(KUBECTL) delete namespace $(INGRESS_NS) --ignore-not-found
+# O kind já traz DNS e armazenamento por omissão
+enable_addons    = true
 kill_ports       = { for p in $(1); do lsof -ti tcp:$$p | xargs kill; done; } >/dev/null 2>&1 || true
 else
 KUBECTL         ?= $(MICROK8S) kubectl
@@ -52,6 +54,8 @@ load_image       = $(DOCKER) save $(1) | $(MICROK8S) ctr image import -
 unload_image     = $(MICROK8S) ctr image rm $(1)
 enable_ingress   = $(MICROK8S) enable ingress
 disable_ingress  = $(MICROK8S) disable ingress
+# DNS e armazenamento são necessários ao Keycloak, Prometheus e Grafana (volumes persistentes)
+enable_addons    = $(MICROK8S) enable dns hostpath-storage metrics-server
 kill_ports       = { fuser -k $(foreach p,$(1),$(p)/tcp); sudo fuser -k $(foreach p,$(1),$(p)/tcp); } >/dev/null 2>&1 || true
 endif
 
@@ -151,6 +155,16 @@ define k8s_state
 	-@echo "  imagens do projeto no cluster: $$($(cluster_images) 2>/dev/null | grep -c '$(IMAGE_REPO)/' || true)"
 	-$(DOCKER) system df
 endef
+
+# $(call rollout,<deployment>,<namespace>,<timeout>) — espera pelo deployment; se não ficar
+# pronto, mostra o estado dos pods, os eventos e os logs para se perceber porquê
+rollout = echo "$(KUBECTL) rollout status deployment/$(1) -n $(2) --timeout=$(3)"; \
+	$(KUBECTL) rollout status deployment/$(1) -n $(2) --timeout=$(3) || { \
+		echo "✗ $(1) não ficou pronto em $(3). Diagnóstico:"; \
+		$(KUBECTL) get pods,pvc -n $(2) -o wide; \
+		$(KUBECTL) describe pods -n $(2) -l app=$(1) | sed -n '/^Events:/,$$p'; \
+		$(KUBECTL) logs -n $(2) deployment/$(1) --tail=30; \
+		exit 1; }
 
 image = $(IMAGE_REPO)/$(1):$(2)
 
@@ -336,6 +350,8 @@ clean-dev: ## [DEV] Limpeza Docker completa: compose down, stop, system/volume/n
 # ════════════════════════════════════════════════════════════════════
 
 run-infra: ## [K8S] Aplica Keycloak, Prometheus, Grafana e Jaeger no cluster
+	@echo "===== [K8S] Addons do cluster (DNS e armazenamento) ====="
+	$(enable_addons)
 	@echo "===== [K8S] Keycloak (namespace $(NAMESPACE_AUTH)) ====="
 	$(KUBECTL) apply -f k8s/auth/keycloak.yaml -f k8s/auth/networkpolicy.yaml
 	@echo "===== [K8S] Observabilidade (namespace $(NAMESPACE_OBS)) ====="
@@ -345,17 +361,17 @@ run-infra: ## [K8S] Aplica Keycloak, Prometheus, Grafana e Jaeger no cluster
 		-f k8s/observability/prometheus.yaml \
 		-f k8s/observability/grafana.yaml
 	@echo "===== [K8S] A aguardar que fiquem prontos ====="
-	$(KUBECTL) rollout status deployment/keycloak   -n $(NAMESPACE_AUTH) --timeout=300s
-	$(KUBECTL) rollout status deployment/jaeger     -n $(NAMESPACE_OBS)  --timeout=180s
-	$(KUBECTL) rollout status deployment/prometheus -n $(NAMESPACE_OBS)  --timeout=180s
-	$(KUBECTL) rollout status deployment/grafana    -n $(NAMESPACE_OBS)  --timeout=180s
+	@$(call rollout,keycloak,$(NAMESPACE_AUTH),600s)
+	@$(call rollout,jaeger,$(NAMESPACE_OBS),180s)
+	@$(call rollout,prometheus,$(NAMESPACE_OBS),180s)
+	@$(call rollout,grafana,$(NAMESPACE_OBS),180s)
 
 reset-keycloak: ## [K8S] Repõe o Keycloak a partir de realm-export.json (apaga contas criadas à mão)
 	@echo "===== [K8S] A apagar os dados do Keycloak para reimportar o realm ====="
 	-$(KUBECTL) delete deployment keycloak -n $(NAMESPACE_AUTH) --ignore-not-found --wait=true
 	-$(KUBECTL) delete pvc keycloak-data-pvc -n $(NAMESPACE_AUTH) --ignore-not-found --wait=true
 	$(KUBECTL) apply -f k8s/auth/keycloak.yaml -f k8s/auth/networkpolicy.yaml
-	$(KUBECTL) rollout status deployment/keycloak -n $(NAMESPACE_AUTH) --timeout=300s
+	@$(call rollout,keycloak,$(NAMESPACE_AUTH),600s)
 	@echo "===== [K8S] Keycloak reposto: login admin / admin ====="
 
 forward-infra: ## [K8S] Port-forward de Grafana, Prometheus, Jaeger e Keycloak (STG/PRD)
@@ -393,7 +409,11 @@ clean-infra: ## [K8S] Remove Keycloak, monitorização, Ingress controller, RBAC
 # STG — MicroK8s + Helm  (ambiente onde se testa antes de promover para PRD)
 # ════════════════════════════════════════════════════════════════════
 
-build-stg: $(STAMP_STG) ## [STG] Constrói as imagens (com os pacotes de PRD) e o certificado TLS de PRD
+# DEV e STG não correm em simultâneo: o build de STG começa por limpar DEV (clean-dev),
+# libertando memória e CPU para o cluster. O .venv é recriado logo a seguir.
+build-stg: ## [STG] Limpa DEV (clean-dev), constrói as imagens (com os pacotes de PRD) e o certificado TLS de PRD
+	@$(MAKE) --no-print-directory clean-dev
+	@$(MAKE) --no-print-directory $(STAMP_STG)
 	@for svc in $(SERVICES); do \
 		echo "===== [STG] A construir $(IMAGE_REPO)/$$svc:$(STG_TAG) ====="; \
 		$(DOCKER) build -t $(IMAGE_REPO)/$$svc:$(STG_TAG) ./$$svc; \

@@ -30,7 +30,7 @@ A plataforma destina-se a organizações que necessitam de registar os seus clie
 | Benefício | Como é assegurado |
 |---|---|
 | Entregas rápidas e controladas | Cada alteração é analisada, testada e publicada automaticamente pela ordem DEV → STG → PRD. A versão que chega a produção é exatamente a que foi validada em STG |
-| Disponibilidade e escalabilidade | Em produção, cada serviço executa com um mínimo de duas réplicas e escala automaticamente em função da carga |
+| Disponibilidade e escalabilidade | Em produção, o site de gestão e as duas API executam com um mínimo de duas réplicas; as API escalam automaticamente em função da carga (até 6 e 8 réplicas) |
 | Proteção dos dados | Em produção existe um único ponto de entrada, em HTTPS, e todas as operações exigem autenticação e a permissão adequada |
 | Deteção precoce de problemas | Análise de vulnerabilidades do código, das dependências e das imagens antes de cada entrega; métricas e alertas em tempo real; rastreio de pedidos entre serviços em DEV e STG |
 | Reprodutibilidade | Cada ambiente é criado com dois comandos e totalmente removido com um |
@@ -49,7 +49,7 @@ A plataforma destina-se a organizações que necessitam de registar os seus clie
 
 ![Arquitetura (HLD)](docs/hld.png)
 
-O diagrama editável encontra-se em `docs/hld.drawio`. O processo de implementação, as decisões de design e as ferramentas e bibliotecas utilizadas estão descritos no documento `Passo 8.md`, entregue juntamente com o projeto.
+O diagrama editável encontra-se em `docs/hld.drawio`. O processo de implementação, as decisões de design e as ferramentas e bibliotecas utilizadas estão descritos no documento [`Passo 8.md`](Passo%208.md), na raiz do repositório.
 
 | Componente | Função |
 |---|---|
@@ -83,6 +83,8 @@ sudo snap install microk8s --classic
 ```bash
 sudo microk8s enable dns hostpath-storage metrics-server
 ```
+
+Os *addons* `dns`, `hostpath-storage` e `metrics-server` são também ativados automaticamente por `make run-stg`, caso ainda não o estejam.
 
 Em sistemas sem MicroK8s (macOS ou Windows), a solução executa igualmente num cluster [kind](https://kind.sigs.k8s.io/), criado com `kind create cluster --name dev`. O `Makefile` deteta automaticamente o cluster disponível e os comandos são os mesmos; a única diferença reside no acesso a PRD (secção 4.3).
 
@@ -128,7 +130,7 @@ STG é o ambiente onde tudo é construído, gerado e validado. Só o que é apro
 
 | Passo | Comando | Resultado |
 |---|---|---|
-| 1. Construção | `make build-stg` | Constrói as imagens com todas as dependências de produção instaladas, carrega-as no cluster, gera o certificado TLS de PRD e instala no `.venv` os módulos de teste |
+| 1. Construção | `make build-stg` | Começa por limpar DEV (`make clean-dev`), para que os dois ambientes não disputem a memória da máquina. Constrói depois as imagens com todas as dependências de produção instaladas, carrega-as no cluster, gera o certificado TLS de PRD e instala no `.venv` os módulos de teste |
 | 2. Arranque | `make run-stg` | Instala o Keycloak, as ferramentas de monitorização, o Ingress controller e a aplicação |
 | 3. Validação | `make test-stg` | Executa os testes de integração, *smoke* e de vulnerabilidades do código. Se forem aprovados, prepara PRD: promove as imagens (`stg` → `main`, sem novo *build*) e instala o certificado TLS no cluster. `make integration-stg` executa apenas os testes de integração e *smoke*, sem preparar PRD |
 | 4. Demonstração (opcional) | `make demo-stg` | Cria, edita e apaga um cliente e uma encomenda |
@@ -282,6 +284,7 @@ Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na m
 | `kubernetes cluster unreachable` ao utilizar o `helm` diretamente | O Helm não tem indicação do cluster a utilizar | Executar `make kubeconfig` e acrescentar `--kubeconfig kubeconfig-make.yaml` ao comando. Os comandos `make` fazem-no automaticamente |
 | `UPGRADE FAILED: "projeto-final" has no deployed releases` | Uma instalação anterior foi interrompida | Os comandos `make run-stg` e `make run-prd` e o pipeline removem automaticamente a instalação incompleta |
 | `Credenciais do SonarQube recusadas` | A palavra-passe do SonarQube foi alterada manualmente no painel | `make security SONAR_PASSWORD=<palavra-passe atual>`, ou `make clean-sonar` para recriar o servidor |
+| `keycloak não ficou pronto` ao executar `make run-stg` | Falta de memória ou de armazenamento no cluster, ou primeiro descarregamento da imagem | O comando mostra o estado dos *pods*, os eventos e os registos do Keycloak. Confirmar que DEV foi limpo (`make clean-dev`, feito automaticamente por `make build-stg`) e repetir `make run-stg` |
 | `401 Unauthorized` na autenticação, após atualizar o projeto | O Keycloak mantém as contas e permissões da versão anterior | `make reset-keycloak` no cluster; em DEV, `make clean-dev` e novo arranque |
 
 O Keycloak apenas importa as contas e permissões iniciais (`k8s/auth/realm-export.json`) no primeiro arranque. O comando `make reset-keycloak` repõe essa configuração e elimina as contas criadas manualmente.
@@ -391,7 +394,9 @@ As variáveis do `Makefile` podem ser definidas na linha de comandos, sem altera
 ├── requirements-prd.txt    dependências de execução
 ├── requirements-stg.txt    módulos de teste e de análise
 ├── requirements-dev.txt    conjunto dos anteriores
-└── Makefile                ponto de entrada
+├── Makefile                ponto de entrada
+├── README.md               instalação, utilização e manutenção
+└── Passo 8.md              implementação, decisões de design, ferramentas e bibliotecas
 ```
 
 ---

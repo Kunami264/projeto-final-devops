@@ -4,6 +4,7 @@ import time
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from opentelemetry import trace
@@ -73,17 +74,20 @@ if ENABLE_TRACING:
 Instrumentator().instrument(app).expose(app, endpoint="/metrics", include_in_schema=False)
 
 
-Base.metadata.create_all(bind=engine)
+try:
+    Base.metadata.create_all(bind=engine)
+except SQLAlchemyError as exc:
+    logger.warning("Inicialização da base de dados já feita por outra réplica: %s", exc)
 
 
 class OrderCreate(BaseModel):
     user_id: int
-    item: str
+    item: str = Field(min_length=1, max_length=200)
     quantity: int = Field(gt=0, description="Tem de ser um inteiro positivo")
 
 
 class OrderUpdate(BaseModel):
-    item: str
+    item: str = Field(min_length=1, max_length=200)
     quantity: int = Field(gt=0, description="Tem de ser um inteiro positivo")
 
 
