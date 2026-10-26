@@ -49,7 +49,8 @@ jobs:
           scan-ref: .
           scanners: vuln
           severity: HIGH,CRITICAL
-          ignore-unfixed: true
+          # Não se ignora nada: vulnerabilidades sem correção também fazem falhar
+          ignore-unfixed: false
           exit-code: "1"
           format: table
         env:
@@ -60,8 +61,17 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: SonarQube — vulnerabilidades no código
+      # tests/security (pip-audit e Trivy às dependências) e SonarQube (código)
+      - name: Testes de vulnerabilidades (pip-audit, Trivy, SonarQube)
         run: make security PYTHON=python
+
+      - name: Guardar os relatórios de vulnerabilidades
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: relatorios-seguranca
+          path: tests/security/reports/
+          if-no-files-found: ignore
 
   security-images:
     name: Segurança — imagem (${{ matrix.service }})
@@ -84,7 +94,8 @@ jobs:
           image-ref: local/${{ matrix.service }}:${{ github.sha }}
           format: table
           severity: HIGH,CRITICAL
-          ignore-unfixed: true
+          # Não se ignora nada: vulnerabilidades sem correção também fazem falhar
+          ignore-unfixed: false
           exit-code: "1"
 
   build:
@@ -342,13 +353,14 @@ jobs:
         run: |
           set -euo pipefail
           kubectl apply -f k8s/auth/keycloak.yaml -f k8s/auth/networkpolicy.yaml
-          kubectl -n auth rollout status deployment/keycloak --timeout=300s
+          kubectl -n auth rollout status deployment/keycloak --timeout=600s
 
-      - name: Aplicar stack de observabilidade (Prometheus, Jaeger, Grafana)
+      # Sem Jaeger: o OpenTelemetry existe apenas em DEV
+      - name: Aplicar monitorização (Prometheus, Grafana)
         run: |
           set -euo pipefail
           kubectl apply \
-            -f k8s/observability/jaeger.yaml \
+            -f k8s/observability/namespace.yaml \
             -f k8s/observability/networkpolicy.yaml \
             -f k8s/observability/prometheus.yaml \
             -f k8s/observability/grafana.yaml
@@ -359,7 +371,6 @@ jobs:
             --dry-run=client -o yaml | kubectl apply -f -
 
           kubectl -n observability rollout status deployment/prometheus --timeout=90s
-          kubectl -n observability rollout status deployment/jaeger --timeout=90s
           kubectl -n observability rollout status deployment/grafana --timeout=90s
 
       - name: Deploy no Kubernetes via Helm
@@ -427,23 +438,16 @@ jobs:
           microk8s config > kubeconfig-stg.yaml
           export KUBECONFIG="$PWD/kubeconfig-stg.yaml"
           PF_PROM=""
-          PF_JAEGER=""
-          cleanup() { kill "$PF_PROM" "$PF_JAEGER" 2>/dev/null || true; }
+          cleanup() { kill "$PF_PROM" 2>/dev/null || true; }
           trap cleanup EXIT
 
           echo "## Observabilidade — STG" >> "$GITHUB_STEP_SUMMARY"
           kubectl port-forward -n observability svc/prometheus 19090:9090 >/dev/null 2>&1 & PF_PROM=$!
-          kubectl port-forward -n observability svc/jaeger 17686:16686 >/dev/null 2>&1 & PF_JAEGER=$!
           sleep 5
 
           echo "### Métricas — Prometheus" >> "$GITHUB_STEP_SUMMARY"
           echo '```json' >> "$GITHUB_STEP_SUMMARY"
           curl -fsS 'http://localhost:19090/api/v1/query?query=up' | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-          echo "### Traces recentes — service-orders (Jaeger)" >> "$GITHUB_STEP_SUMMARY"
-          echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          curl -fsS 'http://localhost:17686/api/traces?service=service-orders&limit=5&lookback=1h' | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
           echo "### Logs recentes — service-orders" >> "$GITHUB_STEP_SUMMARY"
@@ -540,12 +544,13 @@ jobs:
         run: |
           set -euo pipefail
           kubectl apply -f k8s/auth/keycloak.yaml -f k8s/auth/networkpolicy.yaml
-          kubectl -n auth rollout status deployment/keycloak --timeout=300s
+          kubectl -n auth rollout status deployment/keycloak --timeout=600s
 
       - name: Aplicar monitorização (Prometheus, Grafana)
         run: |
           set -euo pipefail
           kubectl apply \
+            -f k8s/observability/namespace.yaml \
             -f k8s/observability/networkpolicy.yaml \
             -f k8s/observability/prometheus.yaml \
             -f k8s/observability/grafana.yaml

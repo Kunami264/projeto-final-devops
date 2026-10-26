@@ -23,7 +23,7 @@ DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "admin")
 
 def _get_real_token() -> str:
     last_error = None
-    for attempt in range(10):
+    for _attempt in range(10):
         try:
             resp = httpx.post(
                 KEYCLOAK_TOKEN_URL,
@@ -185,7 +185,8 @@ def test_backoffice_login_and_crud_through_its_own_address():
         assert r.status_code == 200
         order_id = r.json()["id"]
         r = httpx.put(f"{WEB_URL}/orders/{order_id}", json={"item": "Rato", "quantity": 4}, headers=headers, timeout=10)
-        assert r.status_code == 200 and r.json()["quantity"] == 4
+        assert r.status_code == 200
+        assert r.json()["quantity"] == 4
         assert httpx.delete(f"{WEB_URL}/orders/{order_id}", headers=headers, timeout=10).status_code == 204
     finally:
         r = httpx.delete(f"{WEB_URL}/users/{user_id}", headers=headers, timeout=10)

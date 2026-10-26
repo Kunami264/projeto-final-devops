@@ -4,12 +4,12 @@ description: >-
   Plataforma de microsserviços service-users / service-orders, com
   PostgreSQL para service-orders, autenticação/autorização Bearer JWT
   (RS256) validada contra um Authorization Server real (Keycloak),
-  observabilidade completa (Jaeger para tracing em STG, Prometheus com
-  persistência para métricas, Grafana com dashboards provisionados,
-  logs JSON correlacionados por trace_id) e um único chart parametrizado
-  por ambiente (values-staging.yaml / values-production.yaml).
+  observabilidade (Prometheus com persistência para métricas, Grafana com
+  dashboards e alertas provisionados, logs JSON) e um único chart
+  parametrizado por ambiente (values-staging.yaml / values-production.yaml).
+  Sem OpenTelemetry: o rastreio distribuído existe apenas em DEV.
 type: application
-version: 1.7.0
+version: 1.8.0
 appVersion: "1.5.0"
 keywords:
   - fastapi

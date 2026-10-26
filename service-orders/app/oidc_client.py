@@ -39,14 +39,13 @@ class ClientCredentialsTokenProvider:
                 )
                 resp.raise_for_status()
         except httpx.HTTPStatusError as exc:
-            logger.error(
-                "Keycloak recusou o pedido de token client_credentials (%s): %s",
+            logger.exception(
+                "Keycloak recusou o pedido de token client_credentials (%s)",
                 exc.response.status_code if exc.response is not None else "?",
-                exc,
             )
             raise
-        except httpx.RequestError as exc:
-            logger.error("Keycloak indisponível ao pedir token client_credentials: %s", exc)
+        except httpx.RequestError:
+            logger.exception("Keycloak indisponível ao pedir token client_credentials")
             raise
 
         body = resp.json()

@@ -56,7 +56,10 @@ services:
       start_period: 30s
 
   service-users:
-    build: ./service-users
+    build:
+      context: ./service-users
+      args:
+        INSTALL_TRACING: "true"   # OpenTelemetry só em DEV
     ports:
       - "8002:8002"
     environment:
@@ -76,7 +79,10 @@ services:
         condition: service_healthy
 
   service-orders:
-    build: ./service-orders
+    build:
+      context: ./service-orders
+      args:
+        INSTALL_TRACING: "true"   # OpenTelemetry só em DEV
     ports:
       - "8001:8001"
     environment:
@@ -159,16 +165,32 @@ services:
     profiles: ["sonar"]
     environment:
       - SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true
+      # Memória limitada (~1,5 GB no total) para caber numa VM pequena
+      - SONAR_SEARCH_JAVAOPTS=-Xms512m -Xmx512m
+      - SONAR_WEB_JAVAOPTS=-Xmx384m
+      - SONAR_CE_JAVAOPTS=-Xmx384m
     ports:
       - "9500:9000"
     volumes:
       - sonarqube-data:/opt/sonarqube/data
       - sonarqube-extensions:/opt/sonarqube/extensions
       - sonarqube-logs:/opt/sonarqube/logs
+    networks:
+      - sonar-network
 
+# Sub-redes fixas (plano de endereçamento no HLD): a aplicação e as ferramentas de
+# segurança ficam em segmentos separados, sem tráfego entre si.
 networks:
   app-network:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24
+  sonar-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.30.20.0/24
 
 volumes:
   postgres-orders-data:

@@ -76,12 +76,6 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: observability
-      ports:
-        - port: 4317
-    - to:
-        - namespaceSelector:
-            matchLabels:
               kubernetes.io/metadata.name: auth
       ports:
         - port: 8080
@@ -144,12 +138,6 @@ spec:
               app: postgres-orders
       ports:
         - port: 5432
-    - to:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: observability
-      ports:
-        - port: 4317
     - to:
         - namespaceSelector:
             matchLabels:

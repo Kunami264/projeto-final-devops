@@ -28,3 +28,4 @@ kubeconfig-*.yaml
 .certs/
 secret-values.yaml
 .scannerwork/
+tests/security/reports/

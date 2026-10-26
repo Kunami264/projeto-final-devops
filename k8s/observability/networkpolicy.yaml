@@ -29,25 +29,6 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: allow-otlp-from-app-namespaces
-  namespace: observability
-spec:
-  podSelector:
-    matchLabels:
-      app: jaeger
-  policyTypes:
-    - Ingress
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: staging
-      ports:
-        - port: 4317
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
   name: allow-prometheus-scrape-egress
   namespace: observability
 spec:

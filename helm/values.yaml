@@ -82,7 +82,6 @@ postgres:
     password: "troque-esta-password"
 
 observability:
-  enableTracing: true
   enableMetrics: true
 
 oidc:

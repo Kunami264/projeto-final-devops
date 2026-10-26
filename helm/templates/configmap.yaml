@@ -6,10 +6,6 @@ metadata:
   labels:
     {{- include "projeto-final.labels" . | nindent 4 }}
 data:
-  {{- if .Values.observability.enableTracing }}
-  OTEL_EXPORTER_OTLP_ENDPOINT: "jaeger.observability.svc.cluster.local:4317"
-  ENABLE_TRACING: "true"
-  {{- end }}
   USERS_SERVICE_URL: "http://{{ include "projeto-final.serviceFQDN" (dict "name" "service-users" "context" $) }}:8002"
   USERS_SERVICE_TIMEOUT: {{ .Values.serviceOrders.timeoutSeconds | quote }}
   USERS_SERVICE_RETRIES: {{ .Values.serviceOrders.retries | quote }}

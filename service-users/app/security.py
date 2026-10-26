@@ -38,12 +38,12 @@ def _get_signing_key(token: str):
     try:
         return _jwks_client.get_signing_key_from_jwt(token).key
     except jwt.PyJWKClientError as exc:
-        logger.error("Falha a obter a chave de assinatura no JWKS do Keycloak: %s", exc)
+        logger.exception("Falha a obter a chave de assinatura no JWKS do Keycloak")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Não foi possível validar a assinatura do token (identidade indisponível)",
             headers={"WWW-Authenticate": "Bearer"},
-        )
+        ) from exc
 
 
 def _decode_token(token: str) -> TokenClaims:
@@ -58,19 +58,19 @@ def _decode_token(token: str) -> TokenClaims:
 
             options={"require": ["exp", "sub", "scope"], "verify_aud": False},
         )
-    except jwt.ExpiredSignatureError:
+    except jwt.ExpiredSignatureError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token expirado",
             headers={"WWW-Authenticate": "Bearer"},
-        )
+        ) from exc
     except jwt.InvalidTokenError as exc:
         logger.warning("Token JWT rejeitado: %s", exc)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Token inválido",
             headers={"WWW-Authenticate": "Bearer"},
-        )
+        ) from exc
 
     scopes = set(payload.get("scope", "").split())
     subject = payload.get("sub", "desconhecido")

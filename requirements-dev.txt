@@ -1,2 +1,4 @@
 -r requirements-prd.txt
+-r service-users/requirements-tracing.txt
+-r service-orders/requirements-tracing.txt
 -r requirements-stg.txt

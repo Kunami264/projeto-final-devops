@@ -6,14 +6,6 @@ from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel, Field
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
-
-from opentelemetry import trace
-from opentelemetry.sdk.resources import Resource
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor
-from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
-from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.db import Base, engine, get_db
@@ -53,7 +45,17 @@ else:
         client_secret=OIDC_CLIENT_SECRET,
     )
 
+# OpenTelemetry só em DEV (ENABLE_TRACING=true). As bibliotecas estão em requirements-tracing.txt,
+# que não entra na imagem de STG/PRD — por isso só são importadas aqui.
 if ENABLE_TRACING:
+    from opentelemetry import trace
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+    from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
+
     provider = TracerProvider(resource=Resource.create({"service.name": SERVICE_NAME}))
     try:
         provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter(endpoint=OTLP_ENDPOINT, insecure=True)))
@@ -91,15 +93,30 @@ class OrderUpdate(BaseModel):
     quantity: int = Field(gt=0, description="Tem de ser um inteiro positivo")
 
 
+SCOPE_READ = "orders:read"
+SCOPE_WRITE = "orders:write"
+ORDER_NOT_FOUND = "Encomenda não encontrada"
+
+# Respostas de erro documentadas na especificação OpenAPI (/docs)
+RESPONSES_NOT_FOUND = {404: {"description": ORDER_NOT_FOUND}}
+RESPONSES_CREATE = {
+    404: {"description": "Utilizador não encontrado em service-users"},
+    502: {"description": "Falha de autenticação interna com service-users"},
+    503: {"description": "service-users ou Authorization Server (Keycloak) indisponível"},
+}
+
+
+class AuthServerUnavailable(Exception):
+    """O Keycloak não emitiu o token M2M para chamar o service-users."""
+
+
 def _fetch_user_with_retry(user_id: int) -> dict:
     last_error: httpx.RequestError | None = None
     if _token_provider is not None:
         try:
             headers = {"Authorization": f"Bearer {_token_provider.get_token()}"}
-        except (httpx.HTTPStatusError, httpx.RequestError):
-
-
-            raise HTTPException(status_code=503, detail="Authorization Server (Keycloak) indisponível")
+        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
+            raise AuthServerUnavailable() from exc
     else:
         headers = {}
 
@@ -132,22 +149,24 @@ def health() -> dict:
     return {"status": "ok", "service": SERVICE_NAME}
 
 
-@app.post("/orders", tags=["orders"])
+@app.post("/orders", tags=["orders"], responses=RESPONSES_CREATE)
 def create_order(
     order: OrderCreate,
     db: Session = Depends(get_db),
-    claims: TokenClaims = Depends(require_scope("orders:write")),
+    claims: TokenClaims = Depends(require_scope(SCOPE_WRITE)),
 ) -> dict:
     try:
         user_data = _fetch_user_with_retry(order.user_id)
+    except AuthServerUnavailable as exc:
+        raise HTTPException(status_code=503, detail="Authorization Server (Keycloak) indisponível") from exc
     except httpx.HTTPStatusError as exc:
         if exc.response is not None and exc.response.status_code == 401:
             logger.error("service-users rejeitou o token M2M (401) — verificar client secret / client scopes no Keycloak")
-            raise HTTPException(status_code=502, detail="Falha de autenticação interna com service-users")
-        raise HTTPException(status_code=404, detail="Utilizador não encontrado em service-users")
+            raise HTTPException(status_code=502, detail="Falha de autenticação interna com service-users") from exc
+        raise HTTPException(status_code=404, detail="Utilizador não encontrado em service-users") from exc
     except httpx.RequestError as exc:
-        logger.error("service-users indisponível após novas tentativas: %s", exc)
-        raise HTTPException(status_code=503, detail="service-users indisponível")
+        logger.exception("service-users indisponível após novas tentativas")
+        raise HTTPException(status_code=503, detail="service-users indisponível") from exc
 
     new_order = OrderModel(item=order.item, quantity=order.quantity, user=user_data)
     db.add(new_order)
@@ -157,28 +176,28 @@ def create_order(
     return new_order.to_dict()
 
 
-@app.get("/orders/{order_id}", tags=["orders"])
+@app.get("/orders/{order_id}", tags=["orders"], responses=RESPONSES_NOT_FOUND)
 def get_order(
     order_id: int,
     db: Session = Depends(get_db),
-    claims: TokenClaims = Depends(require_scope("orders:read")),
+    claims: TokenClaims = Depends(require_scope(SCOPE_READ)),
 ) -> dict:
     order = db.get(OrderModel, order_id)
     if not order:
-        raise HTTPException(status_code=404, detail="Encomenda não encontrada")
+        raise HTTPException(status_code=404, detail=ORDER_NOT_FOUND)
     return order.to_dict()
 
 
-@app.put("/orders/{order_id}", tags=["orders"])
+@app.put("/orders/{order_id}", tags=["orders"], responses=RESPONSES_NOT_FOUND)
 def update_order(
     order_id: int,
     data: OrderUpdate,
     db: Session = Depends(get_db),
-    claims: TokenClaims = Depends(require_scope("orders:write")),
+    claims: TokenClaims = Depends(require_scope(SCOPE_WRITE)),
 ) -> dict:
     order = db.get(OrderModel, order_id)
     if not order:
-        raise HTTPException(status_code=404, detail="Encomenda não encontrada")
+        raise HTTPException(status_code=404, detail=ORDER_NOT_FOUND)
     order.item = data.item
     order.quantity = data.quantity
     db.commit()
@@ -187,15 +206,15 @@ def update_order(
     return order.to_dict()
 
 
-@app.delete("/orders/{order_id}", status_code=204, tags=["orders"])
+@app.delete("/orders/{order_id}", status_code=204, tags=["orders"], responses=RESPONSES_NOT_FOUND)
 def delete_order(
     order_id: int,
     db: Session = Depends(get_db),
-    claims: TokenClaims = Depends(require_scope("orders:write")),
+    claims: TokenClaims = Depends(require_scope(SCOPE_WRITE)),
 ) -> Response:
     order = db.get(OrderModel, order_id)
     if not order:
-        raise HTTPException(status_code=404, detail="Encomenda não encontrada")
+        raise HTTPException(status_code=404, detail=ORDER_NOT_FOUND)
     db.delete(order)
     db.commit()
     logger.info("Encomenda %d apagada por '%s'", order_id, claims.subject)
@@ -205,7 +224,7 @@ def delete_order(
 @app.get("/orders", tags=["orders"])
 def list_orders(
     db: Session = Depends(get_db),
-    claims: TokenClaims = Depends(require_scope("orders:read")),
+    claims: TokenClaims = Depends(require_scope(SCOPE_READ)),
 ) -> list:
     return [o.to_dict() for o in db.query(OrderModel).order_by(OrderModel.id).all()]
 

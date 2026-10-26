@@ -10,11 +10,20 @@ A plataforma permite a uma organização registar os seus clientes e as respetiv
 
 ## 2. Arquitetura da solução
 
-A solução é composta por três serviços aplicacionais executados em contentores — o site de gestão, a API de clientes e a API de encomendas —, por uma base de dados PostgreSQL, pelo Keycloak, responsável pela autenticação e autorização, e pelas ferramentas de monitorização Prometheus, Grafana e Jaeger (este último apenas em DEV e STG). A API de encomendas comunica com a API de clientes para validar o cliente associado a cada encomenda. A análise de vulnerabilidades do código é feita por um servidor SonarQube local, em Docker, que não faz parte da aplicação.
+A solução é composta por três serviços aplicacionais executados em contentores — o site de gestão, a API de clientes e a API de encomendas —, por uma base de dados PostgreSQL, pelo Keycloak, responsável pela autenticação e autorização, e pelas ferramentas de monitorização Prometheus, Grafana e Jaeger (este último apenas em DEV). A API de encomendas comunica com a API de clientes para validar o cliente associado a cada encomenda. A análise de vulnerabilidades é feita pelo SonarQube (código), pelo pip-audit (dependências Python) e pelo Trivy (dependências e imagens), fora da aplicação.
 
 ![Arquitetura de alto nível (HLD)](docs/hld.png)
 
-*Figura 1 — Arquitetura de alto nível. O diagrama editável encontra-se em `docs/hld.drawio`.*
+*Figura 1 — Arquitetura de alto nível (versão 3.0). O diagrama editável encontra-se em `docs/hld.drawio`.*
+
+O diagrama segue as regras de arquitetura e design de redes do Módulo 2:
+
+- **Organização e hierarquia:** máquina → ambientes → segmentos (rede Docker ou *namespace* Kubernetes), e em cada ambiente as camadas de apresentação, aplicação e dados.
+- **Segmentação e microssegmentação:** as camadas estão separadas por *firewalls* (NetworkPolicies com bloqueio por omissão), e só os fluxos representados são permitidos.
+- **Fluxos:** setas Norte/Sul (utilizadores e Internet) e Este/Oeste (entre serviços), sem cruzamentos de linhas.
+- **Classificação de criticidade:** dados públicos, privados e restritos (RGPD).
+- **Ícones normalizados e rotulagem:** ícones oficiais do Kubernetes e do Docker; rótulos com endereços IP, sub-redes e portas.
+- **Legenda, versão e data:** o ficheiro editável é versionado no Git.
 
 ## 3. Processo de implementação
 
@@ -27,23 +36,26 @@ A implementação decorreu de forma incremental. Cada fase foi validada antes do
 | 3. Contentorização | Um Dockerfile por serviço. As imagens incluem apenas as dependências de execução e são executadas por um utilizador sem privilégios. |
 | 4. Ambiente DEV | Ambiente local em Docker Compose, com todos os serviços, para desenvolvimento, testes unitários e testes de vulnerabilidades do código. |
 | 5. Ambientes STG e PRD | Kubernetes (MicroK8s) com um único *chart* Helm e um ficheiro de valores por ambiente. Em PRD: réplicas, escalonamento automático e ponto de entrada único em HTTPS. |
-| 6. Observabilidade | Métricas no Prometheus, painéis e alertas no Grafana e, em DEV e STG, rastreio distribuído dos pedidos no Jaeger, através do OpenTelemetry. |
+| 6. Observabilidade | Métricas no Prometheus, painéis e alertas no Grafana e, em DEV, rastreio distribuído dos pedidos no Jaeger, através do OpenTelemetry. |
 | 7. Site de gestão | *Backoffice* web que permite aos funcionários gerir clientes e encomendas sem recorrer diretamente à API. |
 | 8. Entrega contínua | Pipeline em GitHub Actions: análise de vulnerabilidades (código, dependências e imagens), construção das imagens, testes e *deploy*, segundo a ordem `dev`, `stg` e `main`. |
 | 9. Consolidação | Separação estrita entre STG (onde tudo é construído, gerado e validado) e PRD (onde apenas se sobe o ambiente), limpeza integral dos ambientes e elaboração da documentação. |
+| 10. Segurança e portabilidade | Resolução de todas as vulnerabilidades, sem exceções: bibliotecas atualizadas e imagens em Alpine. Correção dos 25 *issues* do SonarQube. Testes de vulnerabilidades em `tests/security`, com resultados documentados. Verificação dos pré-requisitos e permissões da máquina (`make check`) e testes sem o ambiente a correr, para poupar memória. |
 
 ## 4. Decisões de design
 
 | Decisão | Fundamentação |
 |---|---|
-| Três ambientes com funções distintas | DEV destina-se ao desenvolvimento, STG à validação e PRD à exploração. Os testes de integração, *smoke* e de vulnerabilidades são executados em DEV e STG; em PRD não são executados testes, sendo a disponibilidade assegurada pelos *health-checks* do Kubernetes. DEV e STG não correm em simultâneo: `make build-stg` começa por limpar DEV (`make clean-dev`), libertando a memória da máquina para o cluster. |
+| Três ambientes com funções distintas | DEV destina-se ao desenvolvimento, STG à validação e PRD à exploração. Os testes unitários e de vulnerabilidades são executados em DEV, e os de integração, *smoke* e de vulnerabilidades em STG; em PRD não são executados testes, sendo a disponibilidade assegurada pelos *health-checks* do Kubernetes. DEV e STG não correm em simultâneo: `make build-stg` começa por limpar DEV (`make clean-dev`), libertando a memória da máquina para o cluster. Os testes de código não precisam do ambiente: `make test-dev` para-o antes de correr. |
 | Em PRD nada é gerado | As imagens são construídas uma única vez em STG, com todas as dependências instaladas. O certificado TLS e o Ingress controller são igualmente preparados em STG. Só depois de os testes de STG passarem as imagens são promovidas para PRD, sem novo *build*. Em PRD apenas se sobe o ambiente, o que torna o arranque rápido e garante que é executado exatamente o que foi validado. |
-| OpenTelemetry apenas em DEV e STG | O rastreio distribuído serve o diagnóstico durante o desenvolvimento e a validação. Em PRD os serviços não são instrumentados, evitando o custo de processamento e o volume de dados; a monitorização de produção faz-se por métricas (Prometheus) e alertas (Grafana). |
-| Testes de vulnerabilidades em várias camadas | O SonarQube analisa o código Python e aplica o *quality gate* **Segurança**, que falha perante qualquer problema de segurança; é executado em DEV, em STG e em todas as execuções do pipeline (`make security`). O Trivy analisa as dependências e as imagens no pipeline, antes de qualquer construção ou promoção. |
-| SonarQube local, a pedido | O SonarQube corre em Docker, no *profile* `sonar` do `docker-compose.yml`, fora da rede da aplicação. Só é iniciado por `make security`, pelo que não consome recursos durante a utilização normal de DEV. As análises ficam guardadas em volume e podem ser consultadas no painel. |
-| Dependências separadas por ambiente | `requirements-prd.txt` contém apenas as dependências de execução. Os módulos de teste e de análise (`pytest`, `httpx`, `pysonar`) encontram-se em `requirements-stg.txt` e `requirements-dev.txt` e não são incluídos nas imagens. |
+| OpenTelemetry apenas em DEV | O rastreio distribuído serve o diagnóstico e a resolução de problemas durante o desenvolvimento. As bibliotecas estão num ficheiro próprio (`requirements-tracing.txt`), instalado só nas imagens de DEV. A imagem de STG, que é a mesma que segue para PRD, não as inclui. Assim, PRD executa exatamente o que foi validado e não tem código de diagnóstico nem o custo de processamento e o volume de dados associados. A monitorização de STG e PRD faz-se por métricas (Prometheus) e alertas (Grafana). |
+| Testes de vulnerabilidades em várias camadas, sem exceções | O SonarQube analisa o código Python. O pip-audit e o Trivy analisam as dependências Python, e o Trivy analisa também as imagens que seguem para PRD. Os testes estão em `tests/security` e correm em DEV (`make test-dev`), em STG (`make test-stg`) e no pipeline. Nenhuma vulnerabilidade é ignorada (o `.trivyignore` não tem exceções). As que existiam foram resolvidas: atualização do `starlette` e do `PyJWT`, mudança da base das imagens de Debian para Alpine (eliminou 44 vulnerabilidades HIGH do sistema operativo sem correção) e remoção do `pip` das imagens. Os resultados estão em `tests/security/RESULTADOS.md`. |
+| SonarQube local, a pedido | O SonarQube corre em Docker, no *profile* `sonar` do `docker-compose.yml`, fora da rede da aplicação. Só é iniciado por `make security`, com a memória limitada a cerca de 1,5 GB, e é parado no fim da análise. Não corre em STG, onde não cabe em memória ao lado do cluster; o código é o mesmo já analisado em DEV e no pipeline. As análises ficam guardadas em volume e podem ser consultadas no painel (`make sonar-up`). |
+| Portabilidade entre máquinas | O projeto é executado noutras máquinas Ubuntu, com outras permissões. `make check` verifica os programas, o acesso ao Docker sem `sudo`, as permissões de `sudo` e a memória, e indica como corrigir cada falha. O `make` pede a palavra-passe do `sudo` antes de abrir *port-forwards* e espera que fiquem ativos antes de correr os testes. Os pré-requisitos estão no README (secção 3). |
+| Dependências separadas por ambiente | `requirements-prd.txt` contém apenas as dependências de execução. O OpenTelemetry está em `requirements-tracing.txt`, só para DEV. Os módulos de teste e de análise (`pytest`, `httpx`, `pysonar`, `pip-audit`) encontram-se em `requirements-stg.txt` e `requirements-dev.txt` e não são incluídos nas imagens. |
 | Ponto de entrada único em HTTPS | Em PRD, um Ingress com TLS e redirecionamento de HTTP para HTTPS constitui o único acesso externo. Os serviços, a administração do Keycloak e as ferramentas de monitorização não são expostos. |
 | Autenticação centralizada | O Keycloak assume a autenticação e a autorização, evitando que cada serviço gira credenciais. A configuração inicial é mantida em ficheiro, o que torna os ambientes reprodutíveis. |
+| Sub-redes fixas em DEV | A rede da aplicação (`172.30.10.0/24`) e a das ferramentas de segurança (`172.30.20.0/24`) são definidas no `docker-compose.yml`. O plano de endereçamento fica previsível e documentado no HLD, e as ferramentas de análise ficam num segmento separado da aplicação. |
 | Rede restrita por omissão | As NetworkPolicies bloqueiam todo o tráfego no cluster e autorizam apenas as ligações necessárias entre componentes. |
 | Isolamento por *namespace* | A aplicação, a identidade e a observabilidade residem em *namespaces* distintos. O Keycloak e a monitorização são partilhados por STG e PRD. |
 | Persistência dos dados | A base de dados utiliza um volume persistente, que se mantém após o reinício dos serviços e a paragem do ambiente. Apenas os comandos de limpeza o eliminam. |
@@ -64,9 +76,11 @@ A implementação decorreu de forma incremental. Cada fase foi validada antes do
 | Keycloak 26 | Autenticação e autorização (OIDC) |
 | nginx | Servidor do site de gestão e Ingress HTTPS em PRD |
 | Prometheus e Grafana | Métricas, painéis e alertas (todos os ambientes) |
-| Jaeger e OpenTelemetry | Rastreio distribuído (DEV e STG) |
+| Jaeger e OpenTelemetry | Rastreio distribuído (DEV) |
 | SonarQube Community 26.9 | Testes de vulnerabilidades do código Python (*quality gate* de segurança) |
-| Trivy | Análise de vulnerabilidades das dependências e das imagens |
+| Trivy 0.76.1 | Análise de vulnerabilidades das dependências e das imagens (corre num contentor) |
+| pip-audit | Análise de vulnerabilidades das dependências Python |
+| Alpine Linux | Base das imagens das API (`python:3.12-alpine3.24`) e do site de gestão |
 | GitHub Actions | Pipeline de integração e entrega contínuas |
 | GitHub Container Registry | Registo das imagens |
 | Make | Ponto de entrada único para todos os ambientes |
@@ -75,43 +89,49 @@ A implementação decorreu de forma incremental. Cada fase foi validada antes do
 
 ## 6. Bibliotecas Python
 
-### 6.1 Execução (`requirements-prd.txt`)
+### 6.1 Execução (`requirements-prd.txt`, imagens de STG e PRD)
 
 | Biblioteca | Versão | Finalidade |
 |---|---|---|
-| fastapi | 0.120.1 | *Framework* web das duas API |
+| fastapi | 0.141.1 | *Framework* web das duas API (a versão mais recente sem dependência do OpenTelemetry) |
+| starlette | 1.10.0 | Base do FastAPI (corrige as CVE-2026-48818 e CVE-2026-54283) |
 | uvicorn | 0.30.6 | Servidor de aplicações (ASGI) |
 | pydantic | 2.12.5 | Validação dos dados recebidos |
 | sqlalchemy | 2.0.35 | Acesso à base de dados (ORM) |
 | psycopg2-binary | 2.9.11 | Ligação ao PostgreSQL |
-| pyjwt | 2.14.0 | Validação dos *tokens* de autenticação |
+| pyjwt | 2.15.1 | Validação dos *tokens* de autenticação |
 | cryptography | 50.0.0 | Verificação da assinatura dos *tokens* |
 | httpx | 0.27.2 | Comunicação entre a API de encomendas e a API de clientes |
-| opentelemetry-api, -sdk e -exporter-otlp-proto-grpc | 1.39.1 | Geração e envio de *traces* para o Jaeger (ativo apenas em DEV e STG) |
-| opentelemetry-instrumentation-fastapi e -httpx | 0.60b1 | Rastreio automático dos pedidos (ativo apenas em DEV e STG) |
-| prometheus-fastapi-instrumentator | 7.0.0 | Exposição de métricas para o Prometheus |
+| prometheus-fastapi-instrumentator | 8.1.0 | Exposição de métricas para o Prometheus |
 
-As bibliotecas `starlette` e `setuptools` encontram-se igualmente fixadas, por razões de compatibilidade.
-
-### 6.2 Testes e análise (`requirements-stg.txt` e `requirements-dev.txt`)
+### 6.2 Rastreio (`requirements-tracing.txt`, só DEV)
 
 | Biblioteca | Versão | Finalidade |
 |---|---|---|
-| pytest | 8.3.3 | Testes unitários, de integração e *smoke* |
+| opentelemetry-api, -sdk e -exporter-otlp-proto-grpc | 1.45.1 | Geração e envio de *traces* para o Jaeger |
+| opentelemetry-instrumentation-fastapi e -httpx | 0.66b1 | Rastreio automático dos pedidos |
+
+### 6.3 Testes e análise (`requirements-stg.txt` e `requirements-dev.txt`)
+
+| Biblioteca | Versão | Finalidade |
+|---|---|---|
+| pytest | 9.1.1 | Testes unitários, de integração, *smoke* e de vulnerabilidades |
 | httpx | 0.27.2 | Cliente HTTP utilizado pelos testes |
 | pysonar | 1.9.0.5762 | Envio do código Python para análise no SonarQube |
+| pip-audit | 2.10.1 | Análise de vulnerabilidades das dependências Python |
 
 ## 7. Validação
 
 | Tipo | Ferramenta | Ambiente | N.º | Âmbito |
 |---|---|---|---|---|
 | Unitários | pytest | DEV | 42 | Cada serviço isoladamente: operações, validação de dados, autenticação e permissões |
-| Vulnerabilidades do código | SonarQube | DEV, STG e pipeline | — | Código das duas API e dos *scripts*; falha perante qualquer problema de segurança |
-| Vulnerabilidades das dependências e imagens | Trivy | Pipeline | — | Dependências Python e imagens Docker |
+| Vulnerabilidades do código | SonarQube | DEV e pipeline | — | Código das duas API, dos *scripts* e dos testes: 0 *issues* (eram 25) |
+| Vulnerabilidades das dependências | pip-audit e Trivy | DEV, STG e pipeline | 5 | Dependências Python de cada serviço: 0 vulnerabilidades |
+| Vulnerabilidades das imagens | Trivy | STG e pipeline | 3 | Imagens que seguem para PRD: 0 vulnerabilidades, em todas as severidades |
 | Integração | pytest | STG | 12 | Ciclo completo com *tokens* reais do Keycloak, comunicação entre serviços e acesso pelo site de gestão |
 | *Smoke* | pytest | STG | 3 | Disponibilidade dos três serviços após o *deploy* |
 
-No pipeline, os testes unitários correm no ramo `dev` e os testes de integração e *smoke* no ramo `stg`, contra o cluster; se forem aprovados, o pipeline de `stg` prepara PRD. No ramo `main` não são executados testes funcionais: repete-se apenas a análise de vulnerabilidades, a imagem validada em STG é promovida sem nova construção e, após aprovação manual, instalada em PRD.
+No pipeline, os testes unitários correm no ramo `dev` e os testes de integração e *smoke* no ramo `stg`, contra o cluster; se forem aprovados, o pipeline de `stg` prepara PRD. Os resultados detalhados dos testes de vulnerabilidades estão em `tests/security/RESULTADOS.md`. No ramo `main` não são executados testes funcionais: repete-se apenas a análise de vulnerabilidades, a imagem validada em STG é promovida sem nova construção e, após aprovação manual, instalada em PRD.
 
 ## 8. Limitações e evolução
 
