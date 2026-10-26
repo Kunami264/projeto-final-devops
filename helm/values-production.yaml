@@ -53,3 +53,8 @@ postgres:
 podDisruptionBudget:
   enabled: true
   minAvailable: 1
+
+# Sem observabilidade em PRD: o Prometheus não recolhe métricas de production
+# (monitorização só em DEV e STG).
+observability:
+  enableMetrics: false

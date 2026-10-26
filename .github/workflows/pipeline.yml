@@ -546,23 +546,6 @@ jobs:
           kubectl apply -f k8s/auth/keycloak.yaml -f k8s/auth/networkpolicy.yaml
           kubectl -n auth rollout status deployment/keycloak --timeout=600s
 
-      - name: Aplicar monitorização (Prometheus, Grafana)
-        run: |
-          set -euo pipefail
-          kubectl apply \
-            -f k8s/observability/namespace.yaml \
-            -f k8s/observability/networkpolicy.yaml \
-            -f k8s/observability/prometheus.yaml \
-            -f k8s/observability/grafana.yaml
-
-          kubectl create secret generic grafana-admin -n observability \
-            --from-literal=GF_SECURITY_ADMIN_USER=admin \
-            --from-literal=GF_SECURITY_ADMIN_PASSWORD="${{ secrets.GRAFANA_ADMIN_PASSWORD_PRD }}" \
-            --dry-run=client -o yaml | kubectl apply -f -
-
-          kubectl -n observability rollout status deployment/prometheus --timeout=90s
-          kubectl -n observability rollout status deployment/grafana --timeout=90s
-
       - name: Verificar pré-requisitos preparados em STG
         run: |
           set -euo pipefail
@@ -607,36 +590,6 @@ jobs:
           kubectl -n production rollout status deployment/service-users --timeout=120s
           kubectl -n production rollout status deployment/service-orders --timeout=120s
           kubectl -n production get deploy,pods,hpa,pdb,ingress
-
-      - name: Capturar evidência de observabilidade (PRD)
-        if: always()
-        run: |
-          set +e
-          microk8s config > kubeconfig-prd.yaml
-          export KUBECONFIG="$PWD/kubeconfig-prd.yaml"
-          PF_PROM=""
-          cleanup() { kill "$PF_PROM" 2>/dev/null || true; }
-          trap cleanup EXIT
-
-          echo "## Observabilidade — PRD" >> "$GITHUB_STEP_SUMMARY"
-          kubectl port-forward -n observability svc/prometheus 29090:9090 >/dev/null 2>&1 & PF_PROM=$!
-          sleep 5
-
-          echo "### Métricas — Prometheus" >> "$GITHUB_STEP_SUMMARY"
-          echo '```json' >> "$GITHUB_STEP_SUMMARY"
-          curl -fsS 'http://localhost:29090/api/v1/query?query=up' | python3 -m json.tool >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-          echo "### Logs recentes — service-orders" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          kubectl logs -n production -l app=service-orders --tail=30 --since=5m >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
-          echo "### Logs recentes — service-users" >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-          kubectl logs -n production -l app=service-users --tail=30 --since=5m >> "$GITHUB_STEP_SUMMARY"
-          echo '```' >> "$GITHUB_STEP_SUMMARY"
-
 
       - name: Remover ficheiros sensíveis do disco do runner
         if: always()

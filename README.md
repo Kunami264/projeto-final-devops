@@ -32,7 +32,7 @@ A plataforma destina-se a organizações que necessitam de registar os seus clie
 | Entregas rápidas e controladas | Cada alteração é analisada, testada e publicada automaticamente pela ordem DEV → STG → PRD. A versão que chega a produção é exatamente a que foi validada em STG |
 | Disponibilidade e escalabilidade | Em produção, o site de gestão e as duas API executam com um mínimo de duas réplicas; as API escalam automaticamente em função da carga (até 6 e 8 réplicas) |
 | Proteção dos dados | Em produção existe um único ponto de entrada, em HTTPS, e todas as operações exigem autenticação e a permissão adequada |
-| Deteção precoce de problemas | Análise de vulnerabilidades do código, das dependências e das imagens antes de cada entrega; métricas e alertas em tempo real; rastreio de pedidos entre serviços em DEV |
+| Deteção precoce de problemas | Análise de vulnerabilidades do código, das dependências e das imagens antes de cada entrega; métricas e alertas em tempo real em DEV e STG; rastreio de pedidos entre serviços em DEV |
 | Reprodutibilidade | Cada ambiente é criado com dois comandos e totalmente removido com um |
 
 ### Ambientes
@@ -58,13 +58,13 @@ O diagrama mostra a hierarquia máquina → ambientes → segmentos e, em cada a
 | **service-orders** | API de encomendas (FastAPI); valida cada cliente junto do `service-users` |
 | **PostgreSQL** | Base de dados, com armazenamento persistente |
 | **Keycloak** | Autenticação e autorização (OIDC/JWT) |
-| **Prometheus** | Recolha de métricas |
-| **Grafana** | Painéis e alertas |
+| **Prometheus** | Recolha de métricas (DEV e STG) |
+| **Grafana** | Painéis e alertas (DEV e STG) |
 | **Jaeger** | Rastreio distribuído (OpenTelemetry), apenas em DEV |
 | **SonarQube** | Análise de vulnerabilidades e qualidade do código Python (servidor local em Docker) |
 | **pip-audit** e **Trivy** | Análise de vulnerabilidades das dependências Python e das imagens Docker |
 
-Em STG e PRD, o Keycloak e as ferramentas de monitorização residem em *namespaces* próprios (`auth` e `observability`) e são partilhados pelos dois ambientes.
+No cluster, o Keycloak reside no *namespace* `auth` e é partilhado por STG e PRD. As ferramentas de monitorização residem no *namespace* `observability` e monitorizam apenas STG: PRD não tem observabilidade (nem métricas, nem rastreio).
 
 ---
 
@@ -168,7 +168,7 @@ STG é o ambiente onde tudo é construído, gerado e validado. Só o que é apro
 | Passo | Comando | Resultado |
 |---|---|---|
 | 1. Construção | `make build-stg` | Começa por limpar DEV (`make clean-dev`), para que os dois ambientes não disputem a memória da máquina. Constrói depois as imagens com todas as dependências de produção instaladas, carrega-as no cluster, gera o certificado TLS de PRD e instala no `.venv` os módulos de teste |
-| 2. Arranque | `make run-stg` | Instala o Keycloak, as ferramentas de monitorização, o Ingress controller e a aplicação |
+| 2. Arranque | `make run-stg` | Instala o Keycloak, as ferramentas de monitorização de STG, o Ingress controller e a aplicação |
 | 3. Validação | `make test-stg` | Executa os testes de integração e *smoke* contra o cluster e os testes de vulnerabilidades às dependências e às imagens que seguem para PRD (pip-audit e Trivy). Se forem aprovados, prepara PRD: promove as imagens (`stg` → `main`, sem novo *build*) e instala o certificado TLS no cluster. `make integration-stg` executa apenas os testes de integração e *smoke*, sem preparar PRD |
 | 4. Demonstração (opcional) | `make demo-stg` | Cria, edita e apaga um cliente e uma encomenda |
 
@@ -182,7 +182,7 @@ O site de gestão fica então disponível em <http://localhost:8100>.
 
 ### 4.3 PRD
 
-Em produção nada é construído nem gerado e não se executam testes: apenas se sobe o ambiente com as imagens e o certificado preparados e validados em STG. O arranque é rápido e executa exatamente o que foi testado. O rastreio distribuído (OpenTelemetry) existe apenas em DEV: as bibliotecas não fazem parte da imagem de STG e PRD.
+Em produção nada é construído nem gerado e não se executam testes: apenas se sobe o ambiente com as imagens e o certificado preparados e validados em STG. O arranque é rápido e executa exatamente o que foi testado. PRD não tem observabilidade: o rastreio distribuído (OpenTelemetry) existe apenas em DEV, e as métricas (Prometheus e Grafana) apenas em DEV e STG.
 
 | Passo | Comando | Resultado |
 |---|---|---|
@@ -210,16 +210,16 @@ Sempre que é solicitada autenticação: utilizador **`admin`**, palavra-passe *
 
 | | DEV | STG | PRD |
 |---|---|---|---|
-| **Condição prévia** | `make run-dev` | `make forward-stg` (site) e `make forward-infra` (ferramentas) | `make forward-infra` (apenas para as ferramentas) |
+| **Condição prévia** | `make run-dev` | `make forward-stg` (site) e `make forward-infra` (ferramentas) | `make forward-infra` (apenas para a consola do Keycloak) |
 | **Site de gestão** | <http://localhost:8000> | <http://localhost:8100> | <https://projeto-final.test/> |
-| **Grafana** | <http://localhost:3000> | <http://localhost:3100> | <http://localhost:3100> |
-| **Prometheus** | <http://localhost:9090> | <http://localhost:9190> | <http://localhost:9190> |
+| **Grafana** | <http://localhost:3000> | <http://localhost:3100> | — (sem observabilidade em PRD) |
+| **Prometheus** | <http://localhost:9090> | <http://localhost:9190> | — (sem observabilidade em PRD) |
 | **Jaeger** | <http://localhost:16686> | — (rastreio só em DEV) | — |
 | **Keycloak** (administração) | <http://localhost:8080> | <http://localhost:8280> | <http://localhost:8280> |
 | **SonarQube** | <http://localhost:9500> (`make sonar-up`) | — | — |
 
 - O site de gestão, o Grafana, o Keycloak e o SonarQube exigem autenticação. O SonarQube é iniciado por `make security` e parado no fim da análise, para libertar memória; para consultar o painel: `make sonar-up`. Usa o utilizador **`admin`** com a palavra-passe **`ProjetoFinal.2026`**, definida na primeira execução. O Prometheus e o Jaeger não dispõem de ecrã de autenticação.
-- Em STG e PRD, as ferramentas de monitorização e a administração do Keycloak não são expostas para o exterior do cluster; o acesso faz-se exclusivamente através de `make forward-infra`. Por serem partilhadas, os endereços coincidem nos dois ambientes.
+- No cluster, as ferramentas de monitorização (só STG) e a administração do Keycloak (partilhado por STG e PRD) não são expostas para o exterior; o acesso faz-se exclusivamente através de `make forward-infra`.
 - As credenciais indicadas são de demonstração e devem ser alteradas antes de qualquer utilização com dados reais (secção 11).
 
 ---
@@ -279,7 +279,7 @@ A palavra-passe de uma conta existente é alterada no mesmo local, em *Credentia
 
 ## 7. Monitorização
 
-Para que existam dados, deve utilizar-se previamente o site ou executar `make demo-dev` algumas vezes.
+A monitorização existe em DEV e STG; PRD não tem observabilidade. Para que existam dados, deve utilizar-se previamente o site ou executar `make demo-dev` (ou `make demo-stg`) algumas vezes.
 
 | Ferramenta | Procedimento | Informação disponível |
 |---|---|---|
@@ -303,7 +303,7 @@ sum(rate(http_requests_total[5m])) by (service)
 | `make clean-dev` | Limpeza Docker completa: `docker compose down -v --rmi all --remove-orphans`, paragem de todos os contentores, `docker system prune -af --volumes`, `volume prune`, `network prune` e `builder prune`; remove ainda o `.venv` e os ficheiros temporários e apresenta `docker system df`. **Elimina os dados** |
 | `make clean-stg` | Remove a aplicação e o *namespace* `staging`, todas as imagens do projeto (no cluster e no Docker) e o certificado gerado em STG. **Elimina os dados** |
 | `make clean-prd` | Remove a aplicação, o *namespace* `production`, o Ingress do Keycloak, o Secret TLS e a entrada `projeto-final.test` do `/etc/hosts`. **Elimina os dados** |
-| `make clean-infra` | Remove o Keycloak, a monitorização, o Ingress controller, o RBAC de cluster do Prometheus e as imagens de terceiros carregadas no cluster |
+| `make clean-infra` | Remove o Keycloak, a monitorização de STG, o Ingress controller, o RBAC de cluster do Prometheus e as imagens de terceiros carregadas no cluster |
 | `make sonar-down` | Para o SonarQube, preservando as análises |
 | `make clean-sonar` | Remove o SonarQube: contentor, volumes (análises) e imagem |
 | `make clean` | Executa todas as limpezas anteriores e remove os ficheiros de acesso ao cluster (`kubeconfig-*.yaml`) e os *port-forwards* ativos |

@@ -130,7 +130,7 @@ STG_ORDERS_URL          := http://localhost:$(STG_ORDERS_PORT)
 STG_KEYCLOAK_URL        := http://localhost:$(STG_KEYCLOAK_PORT)
 STG_KEYCLOAK_MGMT_URL   := http://localhost:$(STG_KEYCLOAK_MGMT_PORT)
 
-# Observabilidade e Keycloak no cluster (partilhados por STG e PRD; sem Jaeger: rastreio só em DEV)
+# Keycloak no cluster (partilhado por STG e PRD) e observabilidade (só STG: sem Jaeger e sem métricas de PRD)
 OBS_PROMETHEUS_PORT   := 9190
 OBS_GRAFANA_PORT      := 3100
 OBS_KEYCLOAK_PORT     := 8280
@@ -418,7 +418,7 @@ clean-dev: ## [DEV] Limpeza Docker completa: compose down, stop, system/volume/n
 
 # ════════════════════════════════════════════════════════════════════
 # INFRAESTRUTURA PARTILHADA NO CLUSTER — Keycloak + Observabilidade
-# (usada por STG e PRD; aplicada automaticamente por run-stg / run-prd)
+# (aplicada por run-stg. O Keycloak serve STG e PRD; Prometheus e Grafana monitorizam só STG)
 # ════════════════════════════════════════════════════════════════════
 
 run-infra: ## [K8S] Aplica Keycloak, Prometheus e Grafana no cluster
@@ -445,9 +445,9 @@ reset-keycloak: ## [K8S] Repõe o Keycloak a partir de realm-export.json (apaga 
 	@$(call rollout,keycloak,$(NAMESPACE_AUTH),600s)
 	@echo "===== [K8S] Keycloak reposto: login admin / admin ====="
 
-forward-infra: ## [K8S] Port-forward de Grafana, Prometheus e Keycloak (STG/PRD)
+forward-infra: ## [K8S] Port-forward de Grafana e Prometheus (STG) e da consola do Keycloak
 	@echo ""
-	@echo "===== [K8S] Observabilidade e Keycloak do cluster ====="
+	@echo "===== [K8S] Observabilidade de STG (não há em PRD) e consola do Keycloak ====="
 	@echo "  Grafana                   http://localhost:$(OBS_GRAFANA_PORT)      admin / admin"
 	@echo "  Prometheus                http://localhost:$(OBS_PROMETHEUS_PORT)      sem login"
 	@echo "  Keycloak (consola admin)  http://localhost:$(OBS_KEYCLOAK_PORT)      admin / admin"

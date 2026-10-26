@@ -55,8 +55,7 @@ data:
           - role: pod
             namespaces:
               names:
-                - staging
-                - production
+                - staging   # sem observabilidade em PRD
 
         relabel_configs:
           - source_labels:

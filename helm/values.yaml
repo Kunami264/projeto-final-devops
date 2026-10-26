@@ -81,6 +81,7 @@ postgres:
     database: orders
     password: "troque-esta-password"
 
+# Recolha de métricas pelo Prometheus (namespace observability). Desligada em PRD.
 observability:
   enableMetrics: true
 

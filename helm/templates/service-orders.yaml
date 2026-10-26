@@ -17,10 +17,12 @@ spec:
     metadata:
       labels:
         app: service-orders
+      {{- if .Values.observability.enableMetrics }}
       annotations:
         prometheus.io/scrape: "true"
         prometheus.io/port: "8001"
         prometheus.io/path: "/metrics"
+      {{- end }}
     spec:
       imagePullSecrets:
         - name: {{ .Values.image.pullSecretName }}

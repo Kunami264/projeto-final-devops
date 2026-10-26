@@ -103,12 +103,14 @@ spec:
               app: web
       ports:
         - port: 8002
+    {{- if .Values.observability.enableMetrics }}
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: observability
       ports:
         - port: 8002
+    {{- end }}
     {{- if .Values.ingress.enabled }}
     - from:
         - namespaceSelector:
