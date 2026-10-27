@@ -358,7 +358,7 @@ A imagem é construída uma única vez, em `build-stg`, com as dependências de 
 | Vulnerabilidades (pip-audit e Trivy) | DEV, STG e pipeline | `tests/security` | 8 |
 | **Total** | | | **65** |
 
-Os testes de vulnerabilidades não precisam do ambiente a correr: analisam o código, as dependências e as imagens. Nenhuma vulnerabilidade é ignorada (o `.trivyignore` não tem exceções), e qualquer vulnerabilidade HIGH ou CRITICAL faz falhar o comando.
+Os testes de vulnerabilidades não precisam do ambiente a correr: analisam o código, as dependências e as imagens. Nenhuma vulnerabilidade é ignorada (o projeto não tem `.trivyignore`), e qualquer vulnerabilidade HIGH ou CRITICAL faz falhar o comando.
 
 | Comando | Ferramentas | Incluído em |
 |---|---|---|

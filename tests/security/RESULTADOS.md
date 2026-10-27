@@ -11,9 +11,9 @@ Testes de segurança do código e das dependências (M8). Não precisam do ambie
 
 `make security` reúne o pip-audit, o Trivy às dependências e o SonarQube, e está incluído em `make test-dev`. `make test-stg` corre o pip-audit e o Trivy às dependências e às imagens. Os testes estão em [`test_vulnerabilidades.py`](test_vulnerabilidades.py). Cada execução grava os relatórios detalhados em `tests/security/reports/`, e o pipeline guarda-os como artefacto (`relatorios-seguranca`).
 
-**Política:** nenhuma vulnerabilidade é ignorada. O `.trivyignore` não tem exceções, e qualquer vulnerabilidade HIGH ou CRITICAL (com ou sem correção disponível) faz falhar os testes.
+**Política:** nenhuma vulnerabilidade é ignorada. O `.trivyignore` foi eliminado, e qualquer vulnerabilidade HIGH ou CRITICAL (com ou sem correção disponível) faz falhar os testes.
 
-## Resultado atual (26/10/2026)
+## Resultado atual (última verificação: 27/10/2026)
 
 | Análise | Resultado |
 |---|---|
