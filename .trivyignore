@@ -1,3 +1,0 @@
-# Sem exceções: nenhuma vulnerabilidade é ignorada.
-# As que existiam (starlette, sistema operativo Debian, pip) foram corrigidas com a atualização
-# das bibliotecas e a mudança da base das imagens para Alpine (ver tests/security).

@@ -359,11 +359,19 @@ jobs:
       - name: Aplicar monitorização (Prometheus, Grafana)
         run: |
           set -euo pipefail
+          # O Prometheus só lê a configuração quando arranca: se o ConfigMap mudar, é reiniciado
+          config_sum() { { kubectl get configmap prometheus-config -n observability -o jsonpath='{.data}' 2>/dev/null || true; } | cksum; }
+          antes=$(config_sum)
           kubectl apply \
             -f k8s/observability/namespace.yaml \
             -f k8s/observability/networkpolicy.yaml \
             -f k8s/observability/prometheus.yaml \
             -f k8s/observability/grafana.yaml
+          depois=$(config_sum)
+          if [ "$antes" != "$(printf '' | cksum)" ] && [ "$antes" != "$depois" ]; then
+            echo "Configuração do Prometheus alterada: a reiniciar para a carregar."
+            kubectl -n observability rollout restart deployment/prometheus
+          fi
 
           kubectl create secret generic grafana-admin -n observability \
             --from-literal=GF_SECURITY_ADMIN_USER=admin \

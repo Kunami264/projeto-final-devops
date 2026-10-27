@@ -168,6 +168,10 @@ define k8s_state
 endef
 
 
+# O Prometheus só lê a configuração (ConfigMap prometheus-config) quando arranca: compara-se o
+# conteúdo antes e depois do apply e, se mudou, o run-infra reinicia-o.
+prometheus_config_sum = { $(KUBECTL) get configmap prometheus-config -n $(NAMESPACE_OBS) -o jsonpath='{.data}' 2>/dev/null || true; } | cksum
+
 rollout = echo "$(KUBECTL) rollout status deployment/$(1) -n $(2) --timeout=$(3)"; \
 	$(KUBECTL) rollout status deployment/$(1) -n $(2) --timeout=$(3) || { \
 		echo "✗ $(1) não ficou pronto em $(3). Diagnóstico:"; \
@@ -427,11 +431,17 @@ run-infra: ## [K8S] Aplica Keycloak, Prometheus e Grafana no cluster
 	@echo "===== [K8S] Keycloak (namespace $(NAMESPACE_AUTH)) ====="
 	$(KUBECTL) apply -f k8s/auth/keycloak.yaml -f k8s/auth/networkpolicy.yaml
 	@echo "===== [K8S] Observabilidade (namespace $(NAMESPACE_OBS)) ====="
+	@antes=$$($(prometheus_config_sum)); \
 	$(KUBECTL) apply \
 		-f k8s/observability/namespace.yaml \
 		-f k8s/observability/networkpolicy.yaml \
 		-f k8s/observability/prometheus.yaml \
-		-f k8s/observability/grafana.yaml
+		-f k8s/observability/grafana.yaml; \
+	depois=$$($(prometheus_config_sum)); \
+	if [ "$$antes" != "$$(printf '' | cksum)" ] && [ "$$antes" != "$$depois" ]; then \
+		echo "===== [K8S] Configuração do Prometheus alterada: a reiniciar para a carregar ====="; \
+		$(KUBECTL) rollout restart deployment/prometheus -n $(NAMESPACE_OBS); \
+	fi
 	@echo "===== [K8S] A aguardar que fiquem prontos ====="
 	@$(call rollout,keycloak,$(NAMESPACE_AUTH),600s)
 	@$(call rollout,prometheus,$(NAMESPACE_OBS),180s)

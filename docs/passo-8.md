@@ -12,9 +12,9 @@ A plataforma permite a uma organização registar os seus clientes e as respetiv
 
 A solução é composta por três serviços aplicacionais executados em contentores — o site de gestão, a API de clientes e a API de encomendas —, por uma base de dados PostgreSQL, pelo Keycloak, responsável pela autenticação e autorização, e pelas ferramentas de monitorização Prometheus e Grafana (DEV e STG) e Jaeger (só DEV). PRD não tem observabilidade. A API de encomendas comunica com a API de clientes para validar o cliente associado a cada encomenda. A análise de vulnerabilidades é feita pelo SonarQube (código), pelo pip-audit (dependências Python) e pelo Trivy (dependências e imagens), fora da aplicação.
 
-![Arquitetura de alto nível (HLD)](docs/hld.png)
+![Arquitetura de alto nível (HLD)](20261026-HLD-ProjetoFinal-DevOps.png)
 
-*Figura 1 — Arquitetura de alto nível (versão 3.0). O diagrama editável encontra-se em `docs/hld.drawio`.*
+*Figura 1 — Arquitetura de alto nível (versão 3.1). O diagrama editável encontra-se em `docs/20261026-HLD-ProjetoFinal-DevOps.drawio`.*
 
 O diagrama segue as regras de arquitetura e design de redes do Módulo 2:
 

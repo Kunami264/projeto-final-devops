@@ -47,9 +47,9 @@ A plataforma destina-se a organizações que necessitam de registar os seus clie
 
 ## 2. Arquitetura
 
-![Arquitetura (HLD)](docs/hld.png)
+![Arquitetura (HLD)](docs/20261026-HLD-ProjetoFinal-DevOps.png)
 
-O diagrama mostra a hierarquia máquina → ambientes → segmentos e, em cada ambiente, as camadas de apresentação, aplicação e dados, separadas por *firewalls* (NetworkPolicies, com bloqueio por omissão). As setas pretas indicam o tráfego Norte/Sul (utilizadores e Internet) e as vermelhas o tráfego Este/Oeste (entre serviços). As cores classificam os dados: públicos, privados e restritos. A legenda e o plano de endereçamento IP e portas estão no próprio diagrama. O diagrama editável encontra-se em `docs/hld.drawio`. O processo de implementação, as decisões de design e as ferramentas e bibliotecas utilizadas estão descritos no documento [`Passo 8.md`](Passo%208.md), na raiz do repositório.
+O diagrama mostra a hierarquia máquina → ambientes → segmentos e, em cada ambiente, as camadas de apresentação, aplicação e dados, separadas por *firewalls* (NetworkPolicies, com bloqueio por omissão). As setas pretas indicam o tráfego Norte/Sul (utilizadores e Internet) e as vermelhas o tráfego Este/Oeste (entre serviços). As cores classificam os dados: públicos, privados e restritos. A legenda e o plano de endereçamento IP e portas estão no próprio diagrama. O diagrama editável encontra-se em `docs/20261026-HLD-ProjetoFinal-DevOps.drawio`. O processo de implementação, as decisões de design e as ferramentas e bibliotecas utilizadas estão descritos no documento [`docs/passo-8.md`](docs/passo-8.md).
 
 | Componente | Função |
 |---|---|
@@ -440,15 +440,16 @@ As variáveis do `Makefile` podem ser definidas na linha de comandos, sem altera
 ├── helm/                   chart único · values-staging.yaml · values-production.yaml
 ├── k8s/                    auth/ (Keycloak) · observability/ · ingress/
 ├── scripts/                demo.py · get_token.py
-├── docs/                   hld.png · hld.drawio
+├── docs/                   passo-8.md · HLD (20261026-HLD-ProjetoFinal-DevOps .png e .drawio)
+│   ├── Fotos/              capturas de ecrã de cada passo da execução
+│   └── shell_ouput/        registos dos comandos em DEV, STG, PRD e limpeza
 ├── docker-compose.yml      ambiente DEV · SonarQube (profile sonar)
 ├── sonar-project.properties  configuração da análise SonarQube
 ├── requirements-prd.txt    dependências de execução
 ├── requirements-stg.txt    módulos de teste e de análise
 ├── requirements-dev.txt    conjunto dos anteriores
 ├── Makefile                ponto de entrada
-├── README.md               instalação, utilização e manutenção
-└── Passo 8.md              implementação, decisões de design, ferramentas e bibliotecas
+└── README.md               instalação, utilização e manutenção
 ```
 
 ---
