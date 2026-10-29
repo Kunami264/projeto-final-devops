@@ -124,11 +124,11 @@ STG_KEYCLOAK_PORT       := 8180
 STG_KEYCLOAK_MGMT_PORT  := 8190
 STG_PORTS               := $(STG_WEB_PORT) $(STG_USERS_PORT) $(STG_ORDERS_PORT) $(STG_KEYCLOAK_PORT) $(STG_KEYCLOAK_MGMT_PORT)
 
-STG_WEB_URL             := http://localhost:$(STG_WEB_PORT)
-STG_USERS_URL           := http://localhost:$(STG_USERS_PORT)
-STG_ORDERS_URL          := http://localhost:$(STG_ORDERS_PORT)
-STG_KEYCLOAK_URL        := http://localhost:$(STG_KEYCLOAK_PORT)
-STG_KEYCLOAK_MGMT_URL   := http://localhost:$(STG_KEYCLOAK_MGMT_PORT)
+STG_WEB_URL             := http://127.0.0.1:$(STG_WEB_PORT)
+STG_USERS_URL           := http://127.0.0.1:$(STG_USERS_PORT)
+STG_ORDERS_URL          := http://127.0.0.1:$(STG_ORDERS_PORT)
+STG_KEYCLOAK_URL        := http://127.0.0.1:$(STG_KEYCLOAK_PORT)
+STG_KEYCLOAK_MGMT_URL   := http://127.0.0.1:$(STG_KEYCLOAK_MGMT_PORT)
 
 # Keycloak no cluster (partilhado por STG e PRD) e observabilidade (só STG: sem Jaeger e sem métricas de PRD)
 OBS_PROMETHEUS_PORT   := 9190
@@ -190,7 +190,7 @@ image = $(IMAGE_REPO)/$(1):$(2)
 	push-prd run-prd forward-prd status-prd info-prd stop-prd clean-prd \
 	kubeconfig run-infra reset-keycloak forward-infra clean-infra \
 	security security-deps security-images sonar sonar-up sonar-down clean-sonar \
-	lint clean
+	lint zip clean
 
 # ════════════════════════════════════════════════════════════════════
 # HELP
@@ -732,6 +732,12 @@ lint: ## Valida o Helm chart com os values de cada ambiente
 	$(HELM) lint ./helm
 	$(HELM) lint ./helm -f ./helm/values-staging.yaml
 	$(HELM) lint ./helm -f ./helm/values-production.yaml
+
+zip: ## Gera ProjetoFinal.zip para entrega (só ficheiros do Git; pasta ProjetoFinal/ na raiz do zip)
+	@[ -z "$$(git status --porcelain)" ] || { echo "✗ Há alterações por fazer commit: o zip só leva o que está no Git (git status)"; exit 1; }
+	@rm -f ProjetoFinal.zip
+	git archive --format=zip --prefix=ProjetoFinal/ -o ProjetoFinal.zip HEAD
+	@echo "===== ProjetoFinal.zip criado ✅  ($$(du -h ProjetoFinal.zip | cut -f1)) — primeiro nível: ProjetoFinal/ ====="
 
 clean: clean-prd clean-stg clean-infra clean-dev clean-sonar ## Limpa TUDO: PRD, STG, infraestrutura do cluster, DEV e SonarQube
 	@rm -f $(KUBECONFIG_FILE).tmp $(KUBECONFIG_FILE).err kubeconfig-*.yaml

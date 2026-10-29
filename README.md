@@ -47,9 +47,9 @@ A plataforma destina-se a organizações que necessitam de registar os seus clie
 
 ## 2. Arquitetura
 
-![Arquitetura (HLD)](docs/20261026-HLD-ProjetoFinal-DevOps.png)
+![Arquitetura (HLD)](docs/20261029-HLD-ProjetoFinal-DevOps.png)
 
-O diagrama mostra a hierarquia máquina → ambientes → segmentos e, em cada ambiente, as camadas de apresentação, aplicação e dados, separadas por *firewalls* (NetworkPolicies, com bloqueio por omissão). As setas pretas indicam o tráfego Norte/Sul (utilizadores e Internet) e as vermelhas o tráfego Este/Oeste (entre serviços). As cores classificam os dados: públicos, privados e restritos. A legenda e o plano de endereçamento IP e portas estão no próprio diagrama. O diagrama editável encontra-se em `docs/20261026-HLD-ProjetoFinal-DevOps.drawio`. O processo de implementação, as decisões de design e as ferramentas e bibliotecas utilizadas estão descritos no documento [`docs/passo-8.md`](docs/passo-8.md).
+O diagrama segue o formato *High Level Design / Best Practice* da aula M2-11 (Noções básicas de arquitetura e design). A produção é a *Global Business Function*: utilizadores, Internet e terceiros no topo, e por baixo três segmentos por função — apresentação, aplicação e dados — separados por *firewalls* (Ingress HTTPS e NetworkPolicies com bloqueio por omissão). À direita, como as VLAN partilhadas do modelo, estão os segmentos comuns: Ingress, Identidade (Keycloak) e Internet/terceiros (sem *egress* a partir de PRD). Os círculos ampliam a microssegmentação: entre as duas APIs e entre dados públicos e restritos. STG e DEV aparecem em baixo como ambientes separados (o equivalente às contas). As setas pretas indicam o tráfego Norte/Sul e as vermelhas o tráfego Este/Oeste. As cores classificam os dados segundo o RGPD: públicos, privados, confidenciais e restritos. A legenda e o plano de endereçamento IP e portas estão no próprio diagrama; as decisões de design (pontos 1 a 8 da aula) estão em [`docs/passo-8.md`](docs/passo-8.md). O diagrama editável encontra-se em `docs/20261029-HLD-ProjetoFinal-DevOps.drawio`. O processo de implementação, as decisões de design e as ferramentas e bibliotecas utilizadas estão descritos no documento [`docs/passo-8.md`](docs/passo-8.md).
 
 | Componente | Função |
 |---|---|
@@ -310,6 +310,8 @@ sum(rate(http_requests_total[5m])) by (service)
 
 Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na máquina; permanece apenas o MicroK8s instalado. **Atenção:** `make clean-dev` (incluído em `make clean`) para e remove todos os contentores, imagens e volumes Docker da máquina, e não apenas os deste projeto. Em cluster kind, o nó do cluster é preservado. A remoção da entrada do `/etc/hosts` pede a palavra-passe de administrador.
 
+**Entrega:** `make zip` gera `ProjetoFinal.zip` a partir do Git (`git archive`), com a pasta `ProjetoFinal/` na raiz e sem ficheiros locais (`.venv`, certificados, relatórios, pastas do computador). Exige que as alterações estejam em *commit*.
+
 ---
 
 ## 9. Resolução de problemas
@@ -321,7 +323,7 @@ Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na m
 | `kubernetes cluster unreachable` ao utilizar o `helm` diretamente | O Helm não tem indicação do cluster a utilizar | Executar `make kubeconfig` e acrescentar `--kubeconfig kubeconfig-make.yaml` ao comando. Os comandos `make` fazem-no automaticamente |
 | `UPGRADE FAILED: "projeto-final" has no deployed releases` | Uma instalação anterior foi interrompida | Os comandos `make run-stg` e `make run-prd` e o pipeline removem automaticamente a instalação incompleta |
 | `Credenciais do SonarQube recusadas` | A palavra-passe do SonarQube foi alterada manualmente no painel | `make security SONAR_PASSWORD=<palavra-passe atual>`, ou `make clean-sonar` para recriar o servidor |
-| `Connection refused` nos primeiros testes de `make test-stg` | Os *port-forwards* ainda não estavam ativos | Corrigido: `make test-stg` espera até 60 s que cada *port-forward* aceite ligações e pede antes a palavra-passe do `sudo`. Se persistir, confirmar com `make check` que o `fuser` está instalado |
+| `Connection refused` nos primeiros testes de `make test-stg` | A porta local do *port-forward* abria antes de o túnel até ao *pod* responder | Corrigido: antes do primeiro teste, `tests/conftest.py` espera (até 120 s) que web, APIs e Keycloak respondam por HTTP, e os endereços usam `127.0.0.1`. Se o tempo esgotar, a mensagem indica o serviço em falta: confirmar os *pods* com `kubectl get pods -n staging` |
 | `permission denied ... docker.sock` | O utilizador não pertence ao grupo `docker` | `sudo usermod -aG docker $USER` e iniciar nova sessão (secção 3.3) |
 | `ensurepip is not available` ao criar o `.venv` | Falta o módulo `venv` do Python | `sudo apt install python3-venv` |
 | A máquina fica sem memória | DEV, SonarQube e cluster ao mesmo tempo | `make test-dev` para o ambiente antes dos testes e para o SonarQube no fim; `make build-stg` limpa DEV antes de STG. Recomendam-se 8 GB |
@@ -440,7 +442,7 @@ As variáveis do `Makefile` podem ser definidas na linha de comandos, sem altera
 ├── helm/                   chart único · values-staging.yaml · values-production.yaml
 ├── k8s/                    auth/ (Keycloak) · observability/ · ingress/
 ├── scripts/                demo.py · get_token.py
-├── docs/                   passo-8.md · HLD (20261026-HLD-ProjetoFinal-DevOps .png e .drawio)
+├── docs/                   passo-8.md · HLD (20261029-HLD-ProjetoFinal-DevOps .png e .drawio)
 │   ├── Fotos/              capturas de ecrã de cada passo da execução
 │   └── shell_ouput/        registos dos comandos em DEV, STG, PRD e limpeza
 ├── docker-compose.yml      ambiente DEV · SonarQube (profile sonar)

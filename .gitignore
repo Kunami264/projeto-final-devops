@@ -29,3 +29,5 @@ kubeconfig-*.yaml
 secret-values.yaml
 .scannerwork/
 tests/security/reports/
+ProjetoFinal.zip
+.claude/

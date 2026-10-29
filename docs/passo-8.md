@@ -12,18 +12,21 @@ A plataforma permite a uma organização registar os seus clientes e as respetiv
 
 A solução é composta por três serviços aplicacionais executados em contentores — o site de gestão, a API de clientes e a API de encomendas —, por uma base de dados PostgreSQL, pelo Keycloak, responsável pela autenticação e autorização, e pelas ferramentas de monitorização Prometheus e Grafana (DEV e STG) e Jaeger (só DEV). PRD não tem observabilidade. A API de encomendas comunica com a API de clientes para validar o cliente associado a cada encomenda. A análise de vulnerabilidades é feita pelo SonarQube (código), pelo pip-audit (dependências Python) e pelo Trivy (dependências e imagens), fora da aplicação.
 
-![Arquitetura de alto nível (HLD)](20261026-HLD-ProjetoFinal-DevOps.png)
+![Arquitetura de alto nível (HLD)](20261029-HLD-ProjetoFinal-DevOps.png)
 
-*Figura 1 — Arquitetura de alto nível (versão 3.1). O diagrama editável encontra-se em `docs/20261026-HLD-ProjetoFinal-DevOps.drawio`.*
+*Figura 1 — Arquitetura de alto nível (versão 4.0). O diagrama editável encontra-se em `docs/20261029-HLD-ProjetoFinal-DevOps.drawio`.*
 
-O diagrama segue as regras de arquitetura e design de redes do Módulo 2:
+O diagrama segue o formato *High Level Design / Best Practice* da aula M2-11 (Noções básicas de arquitetura e design):
 
-- **Organização e hierarquia:** máquina → ambientes → segmentos (rede Docker ou *namespace* Kubernetes), e em cada ambiente as camadas de apresentação, aplicação e dados.
-- **Segmentação e microssegmentação:** as camadas estão separadas por *firewalls* (NetworkPolicies com bloqueio por omissão), e só os fluxos representados são permitidos.
-- **Fluxos:** setas Norte/Sul (utilizadores e Internet) e Este/Oeste (entre serviços), sem cruzamentos de linhas.
-- **Classificação de criticidade:** dados públicos, privados e restritos (RGPD).
-- **Ícones normalizados e rotulagem:** ícones oficiais do Kubernetes e do Docker; rótulos com endereços IP, sub-redes e portas.
-- **Legenda, versão e data:** o ficheiro editável é versionado no Git.
+- **1. Ambientes (contas):** DEV, STG e PRD separados. PRD é a *Global Business Function*; STG e DEV aparecem como ambientes à parte. Só PRD tem dados reais.
+- **2. AZs e 3. Regiões:** um único nó (VM), sem multi-AZ. A disponibilidade é garantida ao nível dos pods (réplicas, HPA, PodDisruptionBudget, health-checks).
+- **4. Endereçamento IP:** só intervalos privados RFC 1918, sem sobreposição. O plano de endereços e portas está no diagrama.
+- **5. Internet Ingress:** ponto de entrada único, o Ingress em HTTPS 443.
+- **6. Internet Egress:** PRD não tem saída para a Internet; só o runner do GitHub Actions sai em 443/tcp.
+- **7. Segmentação:** três segmentos por função (apresentação, aplicação, dados), separados por *firewalls* (NetworkPolicies com bloqueio por omissão). Segmentos partilhados em colunas: Ingress, Identidade e Internet/terceiros. Tráfego Norte/Sul a preto e Este/Oeste a vermelho.
+- **8. Microssegmentação:** dois círculos ampliam as zonas críticas — entre as APIs (só a porta 8002 e um token com *scope*) e entre dados públicos e restritos (sem fluxo direto).
+- **Classificação RGPD:** dados públicos, privados, confidenciais e restritos.
+- **Legenda, versão e data** no diagrama; o ficheiro editável é versionado no Git.
 
 ## 3. Processo de implementação
 
