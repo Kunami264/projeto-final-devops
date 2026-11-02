@@ -8,7 +8,8 @@ services:
     volumes:
       - postgres-orders-data:/var/lib/postgresql/data
     networks:
-      - app-network
+      app-network:
+        ipv4_address: 172.30.10.2
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U orders -d orders"]
       interval: 5s
@@ -42,7 +43,8 @@ services:
       - ./k8s/auth/realm-export.json:/opt/keycloak/data/import/realm-export.json:ro
       - keycloak-data:/opt/keycloak/data
     networks:
-      - app-network
+      app-network:
+        ipv4_address: 172.30.10.3
     healthcheck:
       test:
         - "CMD-SHELL"
@@ -69,7 +71,8 @@ services:
       - OIDC_ISSUER=http://keycloak:8080/realms/projeto-final
       - OIDC_ALLOWED_CLIENTS=service-orders-local,api-cli,backoffice
     networks:
-      - app-network
+      app-network:
+        ipv4_address: 172.30.10.4
     depends_on:
       postgres-orders:
         condition: service_healthy
@@ -95,7 +98,8 @@ services:
       - OIDC_CLIENT_SECRET=troque-este-segredo-service-orders-local
       - OIDC_ALLOWED_CLIENTS=api-cli,backoffice
     networks:
-      - app-network
+      app-network:
+        ipv4_address: 172.30.10.5
     depends_on:
       service-users:
         condition: service_healthy
@@ -111,7 +115,8 @@ services:
     ports:
       - "8000:8080"
     networks:
-      - app-network
+      app-network:
+        ipv4_address: 172.30.10.6
     depends_on:
       service-users:
         condition: service_healthy
@@ -126,7 +131,8 @@ services:
       - "16686:16686"
       - "4317:4317"
     networks:
-      - app-network
+      app-network:
+        ipv4_address: 172.30.10.7
 
   prometheus:
     image: prom/prometheus:v2.55.1
@@ -136,7 +142,8 @@ services:
       - ./k8s/observability/prometheus-dev.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus-data:/prometheus
     networks:
-      - app-network
+      app-network:
+        ipv4_address: 172.30.10.8
     depends_on:
       - service-users
       - service-orders
@@ -156,7 +163,8 @@ services:
       - ./k8s/observability/grafana-provisioning/dashboard-files:/var/lib/grafana/dashboards:ro
       - ./k8s/observability/grafana-provisioning/alerting:/etc/grafana/provisioning/alerting:ro
     networks:
-      - app-network
+      app-network:
+        ipv4_address: 172.30.10.9
     depends_on:
       - prometheus
 
@@ -176,7 +184,8 @@ services:
       - sonarqube-extensions:/opt/sonarqube/extensions
       - sonarqube-logs:/opt/sonarqube/logs
     networks:
-      - sonar-network
+      sonar-network:
+        ipv4_address: 172.30.20.2
 
 # Sub-redes fixas (plano de endereçamento no HLD): a aplicação e as ferramentas de
 # segurança ficam em segmentos separados, sem tráfego entre si.

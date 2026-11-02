@@ -12,21 +12,20 @@ A plataforma permite a uma organização registar os seus clientes e as respetiv
 
 A solução é composta por três serviços aplicacionais executados em contentores — o site de gestão, a API de clientes e a API de encomendas —, por uma base de dados PostgreSQL, pelo Keycloak, responsável pela autenticação e autorização, e pelas ferramentas de monitorização Prometheus e Grafana (DEV e STG) e Jaeger (só DEV). PRD não tem observabilidade. A API de encomendas comunica com a API de clientes para validar o cliente associado a cada encomenda. A análise de vulnerabilidades é feita pelo SonarQube (código), pelo pip-audit (dependências Python) e pelo Trivy (dependências e imagens), fora da aplicação.
 
-![Arquitetura de alto nível (HLD)](20261029-HLD-ProjetoFinal-DevOps.png)
+![Arquitetura de alto nível (HLD)](20261102-HLD-ProjetoFinal-DevOps.png)
 
-*Figura 1 — Arquitetura de alto nível (versão 4.0). O diagrama editável encontra-se em `docs/20261029-HLD-ProjetoFinal-DevOps.drawio`.*
+*Figura 1 — Arquitetura de alto nível (versão 5.0). O diagrama editável encontra-se em `docs/20261102-HLD-ProjetoFinal-DevOps.drawio`.*
 
-O diagrama segue o formato *High Level Design / Best Practice* da aula M2-11 (Noções básicas de arquitetura e design):
+O diagrama segue o formato praticado nas aulas (M2-11): uma vista de rede da máquina onde o projeto corre. Tudo corre e é acedido dentro da VM Ubuntu 24.04 (Parallels Desktop, `10.211.55.4/24`), que sai para a Internet pela NAT do Parallels. Dentro da VM, o Docker (DEV) liga os contentores à bridge `app-network` (`172.30.10.0/24`), com IPs fixos definidos no `docker-compose.yml`; o SonarQube está na `sonar-network` (`172.30.20.0/24`) e o Trivy corre na `docker0` (`172.17.0.0/16`). O MicroK8s (STG e PRD) usa o Calico (pods `10.1.0.0/16`, serviços `10.152.183.0/24`) e mostra os *namespaces* `ingress`, `production`, `staging`, `auth` e `observability`. Cada etiqueta indica a porta na VM e a porta de destino (VM : contentor), com cores por ambiente: DEV a amarelo, STG a azul e PRD a vermelho. O painel *Network Info* resume todos os endereços IP e portas.
 
-- **1. Ambientes (contas):** DEV, STG e PRD separados. PRD é a *Global Business Function*; STG e DEV aparecem como ambientes à parte. Só PRD tem dados reais.
-- **2. AZs e 3. Regiões:** um único nó (VM), sem multi-AZ. A disponibilidade é garantida ao nível dos pods (réplicas, HPA, PodDisruptionBudget, health-checks).
-- **4. Endereçamento IP:** só intervalos privados RFC 1918, sem sobreposição. O plano de endereços e portas está no diagrama.
-- **5. Internet Ingress:** ponto de entrada único, o Ingress em HTTPS 443.
-- **6. Internet Egress:** PRD não tem saída para a Internet; só o runner do GitHub Actions sai em 443/tcp.
-- **7. Segmentação:** três segmentos por função (apresentação, aplicação, dados), separados por *firewalls* (NetworkPolicies com bloqueio por omissão). Segmentos partilhados em colunas: Ingress, Identidade e Internet/terceiros. Tráfego Norte/Sul a preto e Este/Oeste a vermelho.
-- **8. Microssegmentação:** dois círculos ampliam as zonas críticas — entre as APIs (só a porta 8002 e um token com *scope*) e entre dados públicos e restritos (sem fluxo direto).
-- **Classificação RGPD:** dados públicos, privados, confidenciais e restritos.
-- **Legenda, versão e data** no diagrama; o ficheiro editável é versionado no Git.
+Decisões de arquitetura e de rede (Módulo 2):
+
+- **Ambientes separados:** DEV em Docker Compose; STG e PRD em *namespaces* próprios do MicroK8s, cada um com NetworkPolicies de bloqueio por omissão. Só PRD tem dados reais.
+- **Disponibilidade:** um único nó (VM), sem multi-AZ. A disponibilidade é garantida ao nível dos pods (réplicas, HPA, PodDisruptionBudget, health-checks).
+- **Endereçamento IP:** só intervalos privados RFC 1918, sem sobreposição entre redes.
+- **Entrada (Ingress):** em PRD, ponto de entrada único pelo Ingress em HTTPS 443 (80 redireciona para 443). STG só é acessível por *port-forward* em `127.0.0.1`.
+- **Saída (Egress):** a VM sai para a Internet pela NAT do Parallels (GitHub, GHCR, Docker Hub, PyPI). Os pods de PRD não têm saída para a Internet.
+- **Segmentação e microssegmentação:** apresentação, aplicação e dados separados por NetworkPolicies (só passam os fluxos necessários, porta a porta), e cada pedido às APIs valida o token JWT e o *scope* (Zero Trust).
 
 ## 3. Processo de implementação
 
