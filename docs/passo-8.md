@@ -12,9 +12,9 @@ A plataforma permite a uma organização registar os seus clientes e as respetiv
 
 A solução é composta por três serviços aplicacionais executados em contentores — o site de gestão, a API de clientes e a API de encomendas —, por uma base de dados PostgreSQL, pelo Keycloak, responsável pela autenticação e autorização, e pelas ferramentas de monitorização Prometheus e Grafana (DEV e STG) e Jaeger (só DEV). PRD não tem observabilidade. A API de encomendas comunica com a API de clientes para validar o cliente associado a cada encomenda. A análise de vulnerabilidades é feita pelo SonarQube (código), pelo pip-audit (dependências Python) e pelo Trivy (dependências e imagens), fora da aplicação.
 
-![Arquitetura de alto nível (HLD)](20261102-HLD-ProjetoFinal-DevOps.png)
+![Arquitetura de alto nível (HLD)](20261102-HLDProjetoFinal-DevOps.drawio.png)
 
-*Figura 1 — Arquitetura de alto nível (versão 5.0). O diagrama editável encontra-se em `docs/20261102-HLD-ProjetoFinal-DevOps.drawio`.*
+*Figura 1 — Arquitetura de alto nível (versão 5.0). O ficheiro `.drawio.png` contém também o diagrama editável (abre-se diretamente no draw.io).*
 
 O diagrama segue o formato praticado nas aulas (M2-11): uma vista de rede da máquina onde o projeto corre. Tudo corre e é acedido dentro da VM Ubuntu 24.04 (Parallels Desktop, `10.211.55.4/24`), que sai para a Internet pela NAT do Parallels. Dentro da VM, o Docker (DEV) liga os contentores à bridge `app-network` (`172.30.10.0/24`), com IPs fixos definidos no `docker-compose.yml`; o SonarQube está na `sonar-network` (`172.30.20.0/24`) e o Trivy corre na `docker0` (`172.17.0.0/16`). O MicroK8s (STG e PRD) usa o Calico (pods `10.1.0.0/16`, serviços `10.152.183.0/24`) e mostra os *namespaces* `ingress`, `production`, `staging`, `auth` e `observability`. Cada etiqueta indica a porta na VM e a porta de destino (VM : contentor), com cores por ambiente: DEV a amarelo, STG a azul e PRD a vermelho. O painel *Network Info* resume todos os endereços IP e portas.
 

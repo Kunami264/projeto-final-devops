@@ -47,9 +47,9 @@ A plataforma destina-se a organizações que necessitam de registar os seus clie
 
 ## 2. Arquitetura
 
-![Arquitetura (HLD)](docs/20261102-HLD-ProjetoFinal-DevOps.png)
+![Arquitetura (HLD)](docs/20261102-HLDProjetoFinal-DevOps.drawio.png)
 
-O diagrama segue o formato praticado nas aulas (M2-11): uma vista de rede da máquina onde o projeto corre. Tudo corre e é acedido dentro da VM Ubuntu 24.04 (Parallels Desktop, `10.211.55.4/24`), que sai para a Internet pela NAT do Parallels. Dentro da VM, o Docker (DEV) liga os contentores à bridge `app-network` (`172.30.10.0/24`), com IPs fixos definidos no `docker-compose.yml`; o SonarQube está na `sonar-network` (`172.30.20.0/24`) e o Trivy corre na `docker0` (`172.17.0.0/16`). O MicroK8s (STG e PRD) usa o Calico (pods `10.1.0.0/16`, serviços `10.152.183.0/24`) e mostra os *namespaces* `ingress`, `production`, `staging`, `auth` e `observability`. Cada etiqueta indica a porta na VM e a porta de destino (VM : contentor), com cores por ambiente: DEV a amarelo, STG a azul e PRD a vermelho. O painel *Network Info* resume todos os endereços IP e portas. O diagrama editável encontra-se em `docs/20261102-HLD-ProjetoFinal-DevOps.drawio`. O processo de implementação, as decisões de design e as ferramentas e bibliotecas utilizadas estão descritos no documento [`docs/passo-8.md`](docs/passo-8.md).
+O diagrama segue o formato praticado nas aulas (M2-11): uma vista de rede da máquina onde o projeto corre. Tudo corre e é acedido dentro da VM Ubuntu 24.04 (Parallels Desktop, `10.211.55.4/24`), que sai para a Internet pela NAT do Parallels. Dentro da VM, o Docker (DEV) liga os contentores à bridge `app-network` (`172.30.10.0/24`), com IPs fixos definidos no `docker-compose.yml`; o SonarQube está na `sonar-network` (`172.30.20.0/24`) e o Trivy corre na `docker0` (`172.17.0.0/16`). O MicroK8s (STG e PRD) usa o Calico (pods `10.1.0.0/16`, serviços `10.152.183.0/24`) e mostra os *namespaces* `ingress`, `production`, `staging`, `auth` e `observability`. Cada etiqueta indica a porta na VM e a porta de destino (VM : contentor), com cores por ambiente: DEV a amarelo, STG a azul e PRD a vermelho. O painel *Network Info* resume todos os endereços IP e portas. O ficheiro `docs/20261102-HLDProjetoFinal-DevOps.drawio.png` é ao mesmo tempo a imagem e o diagrama editável (abre-se diretamente no draw.io). O processo de implementação, as decisões de design e as ferramentas e bibliotecas utilizadas estão descritos no documento [`docs/passo-8.md`](docs/passo-8.md).
 
 | Componente | Função |
 |---|---|
@@ -442,7 +442,7 @@ As variáveis do `Makefile` podem ser definidas na linha de comandos, sem altera
 ├── helm/                   chart único · values-staging.yaml · values-production.yaml
 ├── k8s/                    auth/ (Keycloak) · observability/ · ingress/
 ├── scripts/                demo.py · get_token.py
-├── docs/                   passo-8.md · HLD (20261102-HLD-ProjetoFinal-DevOps .png e .drawio)
+├── docs/                   passo-8.md · HLD (20261102-HLDProjetoFinal-DevOps.drawio.png)
 │   ├── Fotos/              capturas de ecrã de cada passo da execução
 │   └── shell_ouput/        registos dos comandos em DEV, STG, PRD e limpeza
 ├── docker-compose.yml      ambiente DEV · SonarQube (profile sonar)
