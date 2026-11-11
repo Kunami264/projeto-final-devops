@@ -443,7 +443,7 @@ run-infra: ## [K8S] Aplica Keycloak, Prometheus e Grafana no cluster
 		$(KUBECTL) rollout restart deployment/prometheus -n $(NAMESPACE_OBS); \
 	fi
 	@echo "===== [K8S] A aguardar que fiquem prontos ====="
-	@$(call rollout,keycloak,$(NAMESPACE_AUTH),600s)
+	@$(call rollout,keycloak,$(NAMESPACE_AUTH),1800s)
 	@$(call rollout,prometheus,$(NAMESPACE_OBS),180s)
 	@$(call rollout,grafana,$(NAMESPACE_OBS),180s)
 
@@ -452,7 +452,7 @@ reset-keycloak: ## [K8S] Repõe o Keycloak a partir de realm-export.json (apaga 
 	-$(KUBECTL) delete deployment keycloak -n $(NAMESPACE_AUTH) --ignore-not-found --wait=true
 	-$(KUBECTL) delete pvc keycloak-data-pvc -n $(NAMESPACE_AUTH) --ignore-not-found --wait=true
 	$(KUBECTL) apply -f k8s/auth/keycloak.yaml -f k8s/auth/networkpolicy.yaml
-	@$(call rollout,keycloak,$(NAMESPACE_AUTH),600s)
+	@$(call rollout,keycloak,$(NAMESPACE_AUTH),1800s)
 	@echo "===== [K8S] Keycloak reposto: login admin / admin ====="
 
 forward-infra: ## [K8S] Port-forward de Grafana e Prometheus (STG) e da consola do Keycloak

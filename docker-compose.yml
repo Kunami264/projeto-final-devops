@@ -21,11 +21,18 @@ services:
     entrypoint: ["/bin/bash", "-c"]
     command:
       - |
-        ( for i in {1..60}; do
+        # Em segundo plano: quando o Keycloak estiver pronto, define o frontendUrl do realm master.
+        # A espera usa /dev/tcp (não lança a JVM do kcadm), para não tirar CPU ao arranque.
+        ( until ( exec 3<>/dev/tcp/127.0.0.1/9000 &&
+                  printf 'GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3 &&
+                  grep -q -m 1 'HTTP/1.1 200' <&3 ) 2>/dev/null; do
             sleep 5
+          done
+          for i in {1..30}; do
             /opt/keycloak/bin/kcadm.sh config credentials --config /tmp/kcadm.config --server http://localhost:8080 --realm master --user "$$KEYCLOAK_ADMIN" --password "$$KEYCLOAK_ADMIN_PASSWORD" >/dev/null 2>&1 &&
             /opt/keycloak/bin/kcadm.sh update realms/master --config /tmp/kcadm.config -s "attributes.frontendUrl=$$KC_HOSTNAME_ADMIN" &&
             break
+            sleep 10
           done ) &
         exec /opt/keycloak/bin/kc.sh start-dev --import-realm
     environment:
@@ -54,7 +61,7 @@ services:
           cat <&3 | grep -m 1 "HTTP/1.1 200"
       interval: 10s
       timeout: 5s
-      retries: 15
+      retries: 60        # até ~10 min: o primeiro arranque é lento em máquinas com poucos recursos
       start_period: 30s
 
   service-users:

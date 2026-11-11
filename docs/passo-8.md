@@ -12,11 +12,29 @@ A plataforma permite a uma organização registar os seus clientes e as respetiv
 
 A solução é composta por três serviços aplicacionais executados em contentores — o site de gestão, a API de clientes e a API de encomendas —, por uma base de dados PostgreSQL, pelo Keycloak, responsável pela autenticação e autorização, e pelas ferramentas de monitorização Prometheus e Grafana (DEV e STG) e Jaeger (só DEV). PRD não tem observabilidade. A API de encomendas comunica com a API de clientes para validar o cliente associado a cada encomenda. A análise de vulnerabilidades é feita pelo SonarQube (código), pelo pip-audit (dependências Python) e pelo Trivy (dependências e imagens), fora da aplicação.
 
-![Arquitetura de alto nível (HLD)](20261102-HLDProjetoFinal-DevOps.drawio.png)
+![Arquitetura de alto nível (HLD) — PRD](20261110-HLDProjetoFinal-DevOps.drawio.png)
 
-*Figura 1 — Arquitetura de alto nível (versão 5.0). O ficheiro `.drawio.png` contém também o diagrama editável (abre-se diretamente no draw.io).*
+*Figura 1 — Arquitetura de alto nível do ambiente de produção (versão 6.0).*
 
-O diagrama segue o formato praticado nas aulas (M2-11): uma vista de rede da máquina onde o projeto corre. Tudo corre e é acedido dentro da VM Ubuntu 24.04 (Parallels Desktop, `10.211.55.4/24`), que sai para a Internet pela NAT do Parallels. Dentro da VM, o Docker (DEV) liga os contentores à bridge `app-network` (`172.30.10.0/24`), com IPs fixos definidos no `docker-compose.yml`; o SonarQube está na `sonar-network` (`172.30.20.0/24`) e o Trivy corre na `docker0` (`172.17.0.0/16`). O MicroK8s (STG e PRD) usa o Calico (pods `10.1.0.0/16`, serviços `10.152.183.0/24`) e mostra os *namespaces* `ingress`, `production`, `staging`, `auth` e `observability`. Cada etiqueta indica a porta na VM e a porta de destino (VM : contentor), com cores por ambiente: DEV a amarelo, STG a azul e PRD a vermelho. O painel *Network Info* resume todos os endereços IP e portas.
+O HLD principal mostra o ambiente de **produção (PRD)** na perspetiva do cliente, em cinco passos numerados:
+
+1. O cliente abre `https://projeto-final.test` no browser e entra pela porta **443** (HTTPS), a única aberta na VM. A porta 80 apenas redireciona para a 443. O nome `projeto-final.test` tem de apontar para a VM: `make run-prd` indica a entrada a criar no `/etc/hosts`.
+2. O Ingress NGINX termina o HTTPS e entrega o pedido ao serviço certo: o site (`/`), a API de clientes (`/users`) ou a API de encomendas (`/orders`).
+3. No login, o Keycloak confirma o utilizador e a password e devolve um token de acesso.
+4. Cada API valida o token antes de responder. A API de encomendas confirma o cliente na API de clientes.
+5. Os dados ficam no PostgreSQL, em volume persistente.
+
+As APIs, a base de dados e o Keycloak não têm porta aberta para fora, e as NetworkPolicies só permitem as ligações desenhadas. Cada ambiente tem o seu próprio HLD, todos no formato praticado nas aulas (M2-11): o servidor Ubuntu, a rede em tubo com a sub-rede, os contentores ou *pods* ligados à rede, as etiquetas de portas (VM : destino), a NAT e o painel *Network Info*. As portas de DEV estão a amarelo, as de STG a azul e as de PRD a vermelho, e os números 1 a 5 marcam nas peças os passos do percurso.
+
+**DEV — Docker Compose** (acesso por `localhost`; rede `app-network` `172.30.10.0/24`, SonarQube na `sonar-network` `172.30.20.0/24`):
+
+![HLD de DEV](20261110-HLDProjetoFinal-DevOps-DEV.drawio.png)
+
+**STG — Kubernetes (MicroK8s)** (acesso só dentro da VM, por *port-forward* em `127.0.0.1`):
+
+![HLD de STG](20261110-HLDProjetoFinal-DevOps-STG.drawio.png)
+
+Tudo corre numa VM Ubuntu 24.04 (`10.211.55.4`). Os ficheiros `.drawio.png` são ao mesmo tempo a imagem e o diagrama editável (abrem-se diretamente no draw.io).
 
 Decisões de arquitetura e de rede (Módulo 2):
 
