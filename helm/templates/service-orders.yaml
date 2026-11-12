@@ -56,6 +56,14 @@ spec:
               value: "1"
             - name: OIDC_ALLOWED_CLIENTS
               value: {{ .Values.oidc.allowedClientsForOrders | quote }}
+          # Numa máquina lenta o arranque do Python pode passar dos ~35 s que o liveness tolera:
+          # o startupProbe dá até 5 min antes de o liveness e o readiness começarem a atuar.
+          startupProbe:
+            httpGet:
+              path: /health
+              port: 8001
+            periodSeconds: 5
+            failureThreshold: 60
           livenessProbe:
             httpGet:
               path: /health

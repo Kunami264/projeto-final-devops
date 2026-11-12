@@ -30,6 +30,13 @@ spec:
             - name: postgres-storage
               mountPath: /var/lib/postgresql/data
               subPath: postgres
+          # O initdb do primeiro arranque pode ser lento: até 5 min antes de o liveness atuar
+          # (um reinício a meio deixaria o volume inicializado pela metade).
+          startupProbe:
+            exec:
+              command: ["pg_isready", "-U", "orders", "-d", "orders"]
+            periodSeconds: 5
+            failureThreshold: 60
           readinessProbe:
             exec:
               command: ["pg_isready", "-U", "orders", "-d", "orders"]

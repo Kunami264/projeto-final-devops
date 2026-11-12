@@ -56,7 +56,9 @@ unload_image     = $(MICROK8S) ctr image rm $(1)
 enable_ingress   = $(MICROK8S) enable ingress
 disable_ingress  = $(MICROK8S) disable ingress
 # DNS e armazenamento são necessários ao Keycloak, Prometheus e Grafana (volumes persistentes)
-enable_addons    = $(MICROK8S) enable dns hostpath-storage metrics-server
+enable_addons    = $(MICROK8S) enable dns hostpath-storage metrics-server && \
+                   $(KUBECTL) rollout status deployment/coredns -n kube-system --timeout=600s && \
+                   $(KUBECTL) rollout status deployment/hostpath-provisioner -n kube-system --timeout=600s
 # Os port-forwards correm em segundo plano com sudo: pede-se a password antes, em primeiro plano
 # (só quando o kubectl usa sudo; o pipeline passa KUBECTL="microk8s kubectl", sem sudo)
 sudo_refresh     = case "$(KUBECTL)" in sudo*) sudo -v ;; esac
@@ -66,6 +68,8 @@ endif
 KUBECONFIG_FILE ?= kubeconfig-make.yaml
 KUBECONFIG_CMD  ?= $(MICROK8S) config
 HELM            ?= helm --kubeconfig $(KUBECONFIG_FILE)
+# Espera máxima do deploy Helm (descarregar imagens + arranque numa máquina lenta)
+HELM_TIMEOUT    ?= 15m
 
 RELEASE         := projeto-final
 SERVICES        := service-users service-orders web
@@ -172,13 +176,26 @@ endef
 # conteúdo antes e depois do apply e, se mudou, o run-infra reinicia-o.
 prometheus_config_sum = { $(KUBECTL) get configmap prometheus-config -n $(NAMESPACE_OBS) -o jsonpath='{.data}' 2>/dev/null || true; } | cksum
 
-rollout = echo "$(KUBECTL) rollout status deployment/$(1) -n $(2) --timeout=$(3)"; \
-	$(KUBECTL) rollout status deployment/$(1) -n $(2) --timeout=$(3) || { \
+# Se o 'rollout status' falhar em menos de 30 s, não foi por timeout: o Deployment já tinha excedido
+# o prazo de progresso numa tentativa anterior. Nesse caso espera-se pela condição Available.
+rollout = echo "$(KUBECTL) rollout status deployment/$(1) -n $(2) --timeout=$(3)"; SECONDS=0; \
+	$(KUBECTL) rollout status deployment/$(1) -n $(2) --timeout=$(3) || \
+	{ [ $$SECONDS -lt 30 ] && $(KUBECTL) wait deployment/$(1) -n $(2) --for=condition=Available --timeout=$(3); } || { \
 		echo "✗ $(1) não ficou pronto em $(3). Diagnóstico:"; \
-		$(KUBECTL) get pods,pvc -n $(2) -o wide; \
-		$(KUBECTL) describe pods -n $(2) -l app=$(1) | sed -n '/^Events:/,$$p'; \
-		$(KUBECTL) logs -n $(2) deployment/$(1) --tail=30; \
+		$(KUBECTL) get pods,pvc -n $(2) -o wide || true; \
+		$(KUBECTL) describe pods -n $(2) -l app=$(1) | sed -n '/^Events:/,$$p' || true; \
+		$(KUBECTL) logs -n $(2) deployment/$(1) --tail=30 || true; \
 		exit 1; }
+
+# Diagnóstico mostrado quando o deploy Helm não fica pronto a tempo
+helm_diag = echo "✗ O deploy em $(1) não ficou pronto em $(HELM_TIMEOUT). Diagnóstico:"; \
+	$(KUBECTL) get pods,pvc -n $(1) -o wide || true; \
+	$(KUBECTL) get events -n $(1) --sort-by=.lastTimestamp | tail -30 || true; \
+	for d in postgres-orders service-users service-orders; do \
+		echo "----- logs $$d -----"; \
+		$(KUBECTL) logs -n $(1) deployment/$$d --all-containers --tail=30 || true; \
+	done; \
+	$(KUBECTL) top nodes || true
 
 image = $(IMAGE_REPO)/$(1):$(2)
 
@@ -519,7 +536,7 @@ run-stg: kubeconfig run-infra ## [STG] Faz o deploy em Staging (Helm) e prepara 
 		-n $(NAMESPACE_STG) --create-namespace \
 		-f ./helm/values-staging.yaml \
 		--set image.tag=$(STG_TAG) \
-		--wait --timeout 5m
+		--wait --timeout $(HELM_TIMEOUT) || { $(call helm_diag,$(NAMESPACE_STG)); exit 1; }
 	$(KUBECTL) get pods,svc -n $(NAMESPACE_STG)
 	@$(MAKE) --no-print-directory info-stg
 
@@ -659,7 +676,7 @@ run-prd: kubeconfig ## [PRD] Sobe Produção (Helm + Ingress HTTPS) com o que ST
 		--set ingress.host=$(PRD_HOST) \
 		--set ingress.className=$(INGRESS_CLASS) \
 		--set ingress.controllerNamespace=$(INGRESS_NS) \
-		--wait --timeout 5m
+		--wait --timeout $(HELM_TIMEOUT) || { $(call helm_diag,$(NAMESPACE_PRD)); exit 1; }
 	@$(MAKE) --no-print-directory status-prd info-prd
 
 status-prd: ## [PRD] Estado dos workloads (health-checks do Kubernetes, HPA, Ingress)

@@ -247,6 +247,9 @@ metadata:
     app: keycloak
 spec:
   replicas: 1
+  # Igual à espera do make run-infra (30 min): com os 10 min por omissão, numa máquina lenta
+  # o 'rollout status' desistia logo com 'exceeded its progress deadline'.
+  progressDeadlineSeconds: 1800
   strategy:
     type: Recreate
   selector:
