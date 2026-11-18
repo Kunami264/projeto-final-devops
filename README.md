@@ -124,10 +124,11 @@ O Trivy não precisa de ser instalado: corre num contentor (`aquasec/trivy`). O 
 | Permissão | Para quê | Como obter |
 |---|---|---|
 | Acesso ao Docker sem `sudo` | Todos os comandos `make` usam `docker` diretamente | `sudo usermod -aG docker $USER` e iniciar nova sessão (ou `newgrp docker`) |
-| `sudo` | O MicroK8s é comandado com `sudo snap run microk8s` e a entrada `projeto-final.test` é escrita no `/etc/hosts` | Utilizador no grupo `sudo`. Os comandos `make` pedem a palavra-passe quando necessário, incluindo antes de abrir *port-forwards* |
+| Acesso ao MicroK8s sem `sudo` | Os comandos `make` de *build* e *run* usam `microk8s` diretamente e nunca pedem a palavra-passe | `sudo usermod -aG microk8s $USER` e iniciar nova sessão (ou `newgrp microk8s`) |
+| `sudo` (só na preparação da máquina) | Instalar os programas, adicionar o utilizador aos grupos e escrever a entrada `projeto-final.test` no `/etc/hosts` | Utilizador no grupo `sudo`. Feito à mão, uma única vez; `make clean-prd` também o usa para remover a entrada do `/etc/hosts` |
 | Portas livres | Acesso aos serviços | DEV: 8000–8002, 8080, 9000, 3000, 9090, 16686, 4317 e 9500 (SonarQube). STG: 8100–8102, 8180 e 8190. Ferramentas do cluster: 3100, 9190 e 8280. PRD: 80 e 443 |
 
-Opcionalmente, para usar o MicroK8s sem `sudo` fora do `make`: `sudo usermod -aG microk8s $USER` e iniciar nova sessão.
+`make check` confirma estas permissões antes do primeiro *build*.
 
 ### 3.4 MicroK8s (uma única vez)
 
@@ -136,10 +137,12 @@ sudo snap install microk8s --classic
 ```
 
 ```bash
-sudo microk8s enable dns hostpath-storage metrics-server
+sudo usermod -aG microk8s $USER
 ```
 
-Os *addons* `dns`, `hostpath-storage` e `metrics-server` são também ativados automaticamente por `make run-stg`, caso ainda não o estejam.
+Iniciar nova sessão (ou `newgrp microk8s`) para o grupo ficar ativo.
+
+Os *addons* `dns`, `hostpath-storage` e `metrics-server` são ativados automaticamente por `make run-stg`, caso ainda não o estejam.
 
 Em sistemas sem MicroK8s (macOS ou Windows), a solução executa igualmente num cluster [kind](https://kind.sigs.k8s.io/), criado com `kind create cluster --name dev`. O `Makefile` deteta automaticamente o cluster disponível e os comandos são os mesmos; a única diferença reside no acesso a PRD (secção 4.3).
 
@@ -185,7 +188,7 @@ STG é o ambiente onde tudo é construído, gerado e validado. Só o que é apro
 
 | Passo | Comando | Resultado |
 |---|---|---|
-| 1. Construção | `make build-stg` | Começa por limpar DEV (`make clean-dev`), para que os dois ambientes não disputem a memória da máquina. Constrói depois as imagens com todas as dependências de produção instaladas, carrega-as no cluster, gera o certificado TLS de PRD e instala no `.venv` os módulos de teste |
+| 1. Construção | `make build-stg` | Constrói as imagens com todas as dependências de produção instaladas, carrega-as no cluster, gera o certificado TLS de PRD e instala no `.venv` os módulos de teste. Não limpa nem para nada: se DEV estiver a correr, sugere `make stop-dev` ou `make clean-dev`, para os dois ambientes não disputarem a memória da máquina |
 | 2. Arranque | `make run-stg` | Instala o Keycloak, as ferramentas de monitorização de STG, o Ingress controller e a aplicação |
 | 3. Validação | `make test-stg` | Executa os testes de integração e *smoke* contra o cluster e os testes de vulnerabilidades às dependências e às imagens que seguem para PRD (pip-audit e Trivy). Se forem aprovados, prepara PRD: promove as imagens (`stg` → `main`, sem novo *build*) e instala o certificado TLS no cluster. `make integration-stg` executa apenas os testes de integração e *smoke*, sem preparar PRD |
 | 4. Demonstração (opcional) | `make demo-stg` | Cria, edita e apaga um cliente e uma encomenda |
@@ -345,7 +348,9 @@ Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na m
 | `permission denied ... docker.sock` | O utilizador não pertence ao grupo `docker` | `sudo usermod -aG docker $USER` e iniciar nova sessão (secção 3.3) |
 | `ensurepip is not available` ao criar o `.venv` | Falta o módulo `venv` do Python | `sudo apt install python3-venv` |
 | A máquina fica sem memória | DEV, SonarQube e cluster ao mesmo tempo | `make test-dev` para o ambiente antes dos testes e para o SonarQube no fim; `make build-stg` limpa DEV antes de STG. Recomendam-se 8 GB |
-| `keycloak não ficou pronto` ao executar `make run-stg` | Máquina com pouca memória ou CPU (o primeiro arranque do Keycloak é pesado), falta de armazenamento no cluster ou primeiro descarregamento da imagem | O comando espera até 30 minutos e, se falhar, mostra o estado dos *pods*, os eventos e os registos do Keycloak. Confirmar que DEV foi limpo (`make clean-dev`, feito automaticamente por `make build-stg`) e repetir `make run-stg`: o comando retoma onde ficou |
+| `O cluster não está saudável: coredns (kube-system) não ficou pronto` | O DNS interno do cluster não arranca (rede dos *pods* ou falta de recursos); sem ele os serviços não se encontram pelo nome | O comando mostra o estado do nó, os *pods* de `kube-system` e os registos do CoreDNS. `microk8s inspect` gera o relatório completo |
+| `não acede ao MicroK8s sem sudo` | O utilizador não pertence ao grupo `microk8s` | `sudo usermod -aG microk8s $USER` e iniciar nova sessão (secção 3.3) |
+| `keycloak não ficou pronto` ao executar `make run-stg` | Máquina com pouca memória ou CPU (o primeiro arranque do Keycloak é pesado), falta de armazenamento no cluster ou primeiro descarregamento da imagem | O comando espera até 30 minutos e, se falhar, mostra o estado dos *pods*, os eventos e os registos do Keycloak. Confirmar que DEV está parado (`make stop-dev` ou `make clean-dev`) e repetir `make run-stg`: o comando retoma onde ficou |
 | `401 Unauthorized` na autenticação, após atualizar o projeto | O Keycloak mantém as contas e permissões da versão anterior | `make reset-keycloak` no cluster; em DEV, `make clean-dev` e novo arranque |
 
 O Keycloak apenas importa as contas e permissões iniciais (`k8s/auth/realm-export.json`) no primeiro arranque. O comando `make reset-keycloak` repõe essa configuração e elimina as contas criadas manualmente.

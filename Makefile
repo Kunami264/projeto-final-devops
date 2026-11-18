@@ -16,7 +16,8 @@ COMPOSE         ?= $(shell docker compose version >/dev/null 2>&1 && echo "docke
 
 CLUSTER         ?= $(shell if command -v snap >/dev/null 2>&1 || command -v microk8s >/dev/null 2>&1; then echo microk8s; elif command -v kind >/dev/null 2>&1; then echo kind; else echo microk8s; fi)
 KIND_CLUSTER    ?= dev
-MICROK8S        ?= sudo snap run microk8s
+# Sem sudo: o utilizador pertence ao grupo microk8s (README, secção 3.3)
+MICROK8S        ?= microk8s
 
 ifeq ($(CLUSTER),kind)
 KUBECTL         ?= kubectl --context kind-$(KIND_CLUSTER)
@@ -43,26 +44,39 @@ INGRESS_CLASS   ?= public
 INGRESS_NS      ?= ingress
 PRD_PORT        ?= 443
 PRD_PORT_SUFFIX :=
-CLUSTER_HINT    := Ver o estado com: sudo microk8s status --wait-ready
+CLUSTER_HINT    := Ver o estado com: microk8s status --wait-ready
 cluster_up       = if ! snap list microk8s >/dev/null 2>&1; then echo "✗ MicroK8s não está instalado: sudo snap install microk8s --classic"; exit 1; fi; \
-                   if ! $(MICROK8S) status --wait-ready --timeout 15 >/dev/null 2>&1; then \
+                   st=$$($(MICROK8S) status --wait-ready --timeout 15 2>&1) || { \
+                     if echo "$$st" | grep -qi 'insufficient permissions'; then \
+                       echo "✗ O utilizador $$USER não acede ao MicroK8s sem sudo. Configurar uma única vez (README, secção 3.3):"; \
+                       echo "      sudo usermod -aG microk8s $$USER"; \
+                       echo "  e iniciar nova sessão (ou: newgrp microk8s)."; \
+                       exit 1; \
+                     fi; \
                      echo "===== [K8S] MicroK8s parado: a arrancar (pode demorar 1-2 minutos) ====="; \
-                     sudo snap start microk8s; $(MICROK8S) status --wait-ready --timeout 300 >/dev/null; \
-                   fi;
+                     $(MICROK8S) start; $(MICROK8S) status --wait-ready --timeout 300 >/dev/null; \
+                   };
 cluster_images   = $(MICROK8S) ctr image ls -q
 docker_containers = $(DOCKER) ps -qa
 load_image       = $(DOCKER) save $(1) | $(MICROK8S) ctr image import -
 unload_image     = $(MICROK8S) ctr image rm $(1)
 enable_ingress   = $(MICROK8S) enable ingress
 disable_ingress  = $(MICROK8S) disable ingress
-# DNS e armazenamento são necessários ao Keycloak, Prometheus e Grafana (volumes persistentes)
-enable_addons    = $(MICROK8S) enable dns hostpath-storage metrics-server && \
-                   $(KUBECTL) rollout status deployment/coredns -n kube-system --timeout=600s && \
-                   $(KUBECTL) rollout status deployment/hostpath-provisioner -n kube-system --timeout=600s
-# Os port-forwards correm em segundo plano com sudo: pede-se a password antes, em primeiro plano
-# (só quando o kubectl usa sudo; o pipeline passa KUBECTL="microk8s kubectl", sem sudo)
+# DNS e armazenamento são necessários ao Keycloak, Prometheus e Grafana (volumes persistentes).
+# Sem o CoreDNS pronto os serviços não se encontram pelo nome: confirma-se antes de instalar o resto.
+kube_system_diag = echo "✗ O cluster não está saudável: $$d (kube-system) não ficou pronto. Diagnóstico:"; \
+                   $(KUBECTL) get nodes -o wide || true; \
+                   $(KUBECTL) get pods -n kube-system -o wide || true; \
+                   $(KUBECTL) describe pods -n kube-system -l k8s-app=kube-dns | sed -n '/^Events:/,$$p' || true; \
+                   $(KUBECTL) logs -n kube-system -l k8s-app=kube-dns --tail=20 || true; \
+                   echo "  Relatório completo do MicroK8s: microk8s inspect"
+enable_addons    = for a in dns hostpath-storage metrics-server; do $(MICROK8S) enable $$a; done; \
+                   for d in coredns hostpath-provisioner; do \
+                     $(KUBECTL) rollout status deployment/$$d -n kube-system --timeout=600s || { $(kube_system_diag); exit 1; }; \
+                   done
+# Só pede a password se o kubectl for sobreposto para usar sudo (por omissão não usa)
 sudo_refresh     = case "$(KUBECTL)" in sudo*) sudo -v ;; esac
-kill_ports       = { fuser -k $(foreach p,$(1),$(p)/tcp); sudo fuser -k $(foreach p,$(1),$(p)/tcp); } >/dev/null 2>&1 || true
+kill_ports       = fuser -k $(foreach p,$(1),$(p)/tcp) >/dev/null 2>&1 || true
 endif
 
 KUBECONFIG_FILE ?= kubeconfig-make.yaml
@@ -243,9 +257,9 @@ check: ## Verifica pré-requisitos e permissões da máquina (correr antes do pr
 		need fuser "sudo apt install psmisc"; \
 		if snap list microk8s >/dev/null 2>&1; then echo "  ✓ MicroK8s instalado"; \
 		else echo "  ✗ MicroK8s em falta — sudo snap install microk8s --classic"; ok=0; fi; \
-		echo "  … sudo (pode pedir a password do utilizador):"; \
-		if sudo -v; then echo "  ✓ permissões de sudo"; \
-		else echo "  ✗ o utilizador $$USER não tem sudo — necessário para o MicroK8s e o /etc/hosts"; ok=0; fi; \
+		if $(MICROK8S) status >/dev/null 2>&1; then echo "  ✓ MicroK8s acessível sem sudo"; \
+		elif $(MICROK8S) status 2>&1 | grep -qi 'insufficient permissions'; then echo "  ✗ o utilizador $$USER não acede ao MicroK8s — sudo usermod -aG microk8s $$USER e voltar a iniciar sessão"; ok=0; \
+		else echo "  ! MicroK8s parado — os comandos make arrancam-no (microk8s start)"; fi; \
 	else need kind "https://kind.sigs.k8s.io/"; need kubectl "https://kubernetes.io/docs/tasks/tools/"; fi; \
 	if [ -r /proc/meminfo ]; then \
 		mem=$$(awk '/MemTotal/ {printf "%d", $$2/1024/1024 + 0.5}' /proc/meminfo); \
@@ -444,7 +458,7 @@ clean-dev: ## [DEV] Limpeza Docker completa: compose down, stop, system/volume/n
 
 run-infra: ## [K8S] Aplica Keycloak, Prometheus e Grafana no cluster
 	@echo "===== [K8S] Addons do cluster (DNS e armazenamento) ====="
-	$(enable_addons)
+	@$(enable_addons)
 	@echo "===== [K8S] Keycloak (namespace $(NAMESPACE_AUTH)) ====="
 	$(KUBECTL) apply -f k8s/auth/keycloak.yaml -f k8s/auth/networkpolicy.yaml
 	@echo "===== [K8S] Observabilidade (namespace $(NAMESPACE_OBS)) ====="
@@ -506,8 +520,11 @@ clean-infra: ## [K8S] Remove Keycloak, monitorização, Ingress controller, RBAC
 # STG — MicroK8s + Helm  (ambiente onde se testa antes de promover para PRD)
 # ════════════════════════════════════════════════════════════════════
 
-build-stg: ## [STG] Limpa DEV (clean-dev), constrói as imagens (com os pacotes de PRD) e o certificado TLS de PRD
-	@$(MAKE) --no-print-directory clean-dev
+build-stg: ## [STG] Constrói as imagens (com os pacotes de PRD), carrega-as no cluster e gera o certificado TLS de PRD
+	@$(cluster_up)
+	@if [ -n "$$($(COMPOSE) ps -q 2>/dev/null)" ]; then \
+		echo "! DEV está a correr e disputa memória com STG. Sugestão: make stop-dev (ou make clean-dev) antes de make run-stg."; \
+	fi
 	@$(MAKE) --no-print-directory $(STAMP_STG)
 	@for svc in $(SERVICES); do \
 		echo "===== [STG] A construir $(IMAGE_REPO)/$$svc:$(STG_TAG) ====="; \
