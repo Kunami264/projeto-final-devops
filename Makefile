@@ -62,19 +62,29 @@ load_image       = $(DOCKER) save $(1) | $(MICROK8S) ctr image import -
 unload_image     = $(MICROK8S) ctr image rm $(1)
 enable_ingress   = $(MICROK8S) enable ingress
 disable_ingress  = $(MICROK8S) disable ingress
-# DNS e armazenamento são necessários ao Keycloak, Prometheus e Grafana (volumes persistentes).
-# Sem o CoreDNS pronto os serviços não se encontram pelo nome: confirma-se antes de instalar o resto.
 kube_system_diag = echo "✗ O cluster não está saudável: $$d (kube-system) não ficou pronto. Diagnóstico:"; \
                    $(KUBECTL) get nodes -o wide || true; \
                    $(KUBECTL) get pods -n kube-system -o wide || true; \
                    $(KUBECTL) describe pods -n kube-system -l k8s-app=kube-dns | sed -n '/^Events:/,$$p' || true; \
-                   $(KUBECTL) logs -n kube-system -l k8s-app=kube-dns --tail=20 || true; \
-                   echo "  Relatório completo do MicroK8s: microk8s inspect"
-enable_addons    = for a in dns hostpath-storage metrics-server; do $(MICROK8S) enable $$a; done; \
-                   for d in coredns hostpath-provisioner; do \
-                     $(KUBECTL) rollout status deployment/$$d -n kube-system --timeout=600s || { $(kube_system_diag); exit 1; }; \
-                   done
-# Só pede a password se o kubectl for sobreposto para usar sudo (por omissão não usa)
+                   $(KUBECTL) logs -n kube-system -l k8s-app=calico-node --tail=20 || true; \
+                   echo "  Verificar a hora da máquina (timedatectl) e o relatório completo do MicroK8s: microk8s inspect"
+calico_repair    = echo "! Rede do cluster (Calico) com credenciais inválidas: a reiniciar o calico-node para as renovar"; \
+                   $(KUBECTL) rollout restart daemonset/calico-node -n kube-system; \
+                   $(KUBECTL) rollout status daemonset/calico-node -n kube-system --timeout=300s; \
+                   $(KUBECTL) delete pods -n kube-system --field-selector=status.phase=Pending --wait=false || true
+calico_broken    = $(KUBECTL) get events -A --field-selector reason=FailedCreatePodSandBox -o jsonpath='{.items[*].message}' 2>/dev/null | grep 'calico.*nauthorized' >/dev/null
+wait_kube_system = SECONDS=0; reparado=0; \
+                   until $(KUBECTL) wait deployment/$$d -n kube-system --for=condition=Available --timeout=15s >/dev/null 2>&1; do \
+                     if [ $$reparado = 0 ] && $(calico_broken); then $(calico_repair); reparado=1; fi; \
+                     [ $$SECONDS -lt 600 ] || { $(kube_system_diag); exit 1; }; \
+                     echo "  a aguardar $$d ($$SECONDS s)"; \
+                   done; echo "  ✓ $$d pronto"
+enable_addons    = if $(KUBECTL) get daemonset/calico-node -n kube-system >/dev/null 2>&1; then \
+                     $(KUBECTL) rollout status daemonset/calico-node -n kube-system --timeout=300s >/dev/null 2>&1 || { $(calico_repair); }; \
+                     if $(calico_broken); then $(calico_repair); fi; \
+                   fi; \
+                   for a in dns hostpath-storage metrics-server; do $(MICROK8S) enable $$a; done; \
+                   for d in coredns hostpath-provisioner; do $(wait_kube_system); done
 sudo_refresh     = case "$(KUBECTL)" in sudo*) sudo -v ;; esac
 kill_ports       = fuser -k $(foreach p,$(1),$(p)/tcp) >/dev/null 2>&1 || true
 endif
@@ -82,7 +92,6 @@ endif
 KUBECONFIG_FILE ?= kubeconfig-make.yaml
 KUBECONFIG_CMD  ?= $(MICROK8S) config
 HELM            ?= helm --kubeconfig $(KUBECONFIG_FILE)
-# Espera máxima do deploy Helm (descarregar imagens + arranque numa máquina lenta)
 HELM_TIMEOUT    ?= 15m
 
 RELEASE         := projeto-final
@@ -186,12 +195,10 @@ define k8s_state
 endef
 
 
-# O Prometheus só lê a configuração (ConfigMap prometheus-config) quando arranca: compara-se o
-# conteúdo antes e depois do apply e, se mudou, o run-infra reinicia-o.
+
 prometheus_config_sum = { $(KUBECTL) get configmap prometheus-config -n $(NAMESPACE_OBS) -o jsonpath='{.data}' 2>/dev/null || true; } | cksum
 
-# Se o 'rollout status' falhar em menos de 30 s, não foi por timeout: o Deployment já tinha excedido
-# o prazo de progresso numa tentativa anterior. Nesse caso espera-se pela condição Available.
+
 rollout = echo "$(KUBECTL) rollout status deployment/$(1) -n $(2) --timeout=$(3)"; SECONDS=0; \
 	$(KUBECTL) rollout status deployment/$(1) -n $(2) --timeout=$(3) || \
 	{ [ $$SECONDS -lt 30 ] && $(KUBECTL) wait deployment/$(1) -n $(2) --for=condition=Available --timeout=$(3); } || { \
@@ -201,7 +208,6 @@ rollout = echo "$(KUBECTL) rollout status deployment/$(1) -n $(2) --timeout=$(3)
 		$(KUBECTL) logs -n $(2) deployment/$(1) --tail=30 || true; \
 		exit 1; }
 
-# Diagnóstico mostrado quando o deploy Helm não fica pronto a tempo
 helm_diag = echo "✗ O deploy em $(1) não ficou pronto em $(HELM_TIMEOUT). Diagnóstico:"; \
 	$(KUBECTL) get pods,pvc -n $(1) -o wide || true; \
 	$(KUBECTL) get events -n $(1) --sort-by=.lastTimestamp | tail -30 || true; \
@@ -265,6 +271,23 @@ check: ## Verifica pré-requisitos e permissões da máquina (correr antes do pr
 		mem=$$(awk '/MemTotal/ {printf "%d", $$2/1024/1024 + 0.5}' /proc/meminfo); \
 		if [ $$mem -ge 8 ]; then echo "  ✓ memória: $$mem GB"; \
 		else echo "  ! memória: $$mem GB — recomendam-se 8 GB (DEV e STG não correm em simultâneo; ver README)"; fi; \
+	fi; \
+	cpus=$$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 0); \
+	if [ $$cpus -ge 4 ]; then echo "  ✓ CPU: $$cpus núcleos"; \
+	elif [ $$cpus -ge 2 ]; then echo "  ! CPU: $$cpus núcleos — funciona, mas recomendam-se 4 (o primeiro arranque do Keycloak fica muito lento)"; \
+	else echo "  ✗ CPU: $$cpus núcleo — o Kubernetes precisa de pelo menos 2"; ok=0; fi; \
+	disco=$$(df -Pk . | awk 'NR==2 {printf "%d", $$4/1024/1024}'); \
+	if [ $$disco -ge 30 ]; then echo "  ✓ disco livre: $$disco GB"; \
+	elif [ $$disco -ge 15 ]; then echo "  ! disco livre: $$disco GB — recomendam-se 30 GB (imagens Docker, imagens do cluster e volumes)"; \
+	else echo "  ✗ disco livre: $$disco GB — são precisos pelo menos 15 GB"; ok=0; fi; \
+	case "$$(uname -m)" in \
+		x86_64|amd64|aarch64|arm64) echo "  ✓ arquitetura: $$(uname -m)" ;; \
+		*) echo "  ✗ arquitetura $$(uname -m) não suportada (só x86_64 e arm64)"; ok=0 ;; \
+	esac; \
+	if command -v systemd-detect-virt >/dev/null 2>&1; then echo "  ✓ virtualização: $$(systemd-detect-virt || true)"; fi; \
+	if command -v timedatectl >/dev/null 2>&1; then \
+		if timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -qx yes; then echo "  ✓ relógio sincronizado (NTP)"; \
+		else echo "  ! relógio não sincronizado — uma hora errada invalida os tokens do cluster e do Keycloak: sudo timedatectl set-ntp true"; fi; \
 	fi; \
 	if [ $$ok = 1 ]; then echo "===== Máquina pronta ✅ ====="; else echo "===== Corrigir os pontos assinalados com ✗ e voltar a correr make check ====="; exit 1; fi
 
@@ -453,7 +476,6 @@ clean-dev: ## [DEV] Limpeza Docker completa: compose down, stop, system/volume/n
 
 # ════════════════════════════════════════════════════════════════════
 # INFRAESTRUTURA PARTILHADA NO CLUSTER — Keycloak + Observabilidade
-# (aplicada por run-stg. O Keycloak serve STG e PRD; Prometheus e Grafana monitorizam só STG)
 # ════════════════════════════════════════════════════════════════════
 
 run-infra: ## [K8S] Aplica Keycloak, Prometheus e Grafana no cluster

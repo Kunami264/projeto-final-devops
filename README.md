@@ -99,8 +99,10 @@ make check
 | Recurso | Mínimo | Observações |
 |---|---|---|
 | Memória | 8 GB | DEV e STG não correm em simultâneo: `make build-stg` começa por limpar DEV. Os testes (`make test-dev`) param primeiro o ambiente, porque não precisam dele |
-| CPU | 4 núcleos | |
+| CPU | 4 núcleos | Com 2 núcleos funciona, mas o primeiro arranque do Keycloak fica muito mais lento |
 | Disco livre | 30 GB | Imagens Docker, imagens do cluster e volumes |
+| Arquitetura | x86_64 ou arm64 | As imagens usadas existem para as duas arquiteturas. Funciona em VM (por exemplo VirtualBox ou Parallels com Ubuntu 24.04) ou em PC físico; não é preciso *nested virtualization*. `make check` mostra a arquitetura e o tipo de virtualização |
+| Relógio | Sincronizado (NTP) | Uma hora errada invalida os *tokens* do cluster e do Keycloak: `sudo timedatectl set-ntp true` |
 | Rede | Acesso à Internet | Descarregamento de imagens (Docker Hub, quay.io) e da base de dados de vulnerabilidades do Trivy |
 
 ### 3.2 Programas
@@ -348,7 +350,8 @@ Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na m
 | `permission denied ... docker.sock` | O utilizador não pertence ao grupo `docker` | `sudo usermod -aG docker $USER` e iniciar nova sessão (secção 3.3) |
 | `ensurepip is not available` ao criar o `.venv` | Falta o módulo `venv` do Python | `sudo apt install python3-venv` |
 | A máquina fica sem memória | DEV, SonarQube e cluster ao mesmo tempo | `make test-dev` para o ambiente antes dos testes e para o SonarQube no fim; `make build-stg` limpa DEV antes de STG. Recomendam-se 8 GB |
-| `O cluster não está saudável: coredns (kube-system) não ficou pronto` | O DNS interno do cluster não arranca (rede dos *pods* ou falta de recursos); sem ele os serviços não se encontram pelo nome | O comando mostra o estado do nó, os *pods* de `kube-system` e os registos do CoreDNS. `microk8s inspect` gera o relatório completo |
+| `plugin type="calico" failed (add): ... connection is unauthorized: Unauthorized` e *pods* presos em `ContainerCreating` | O *token* que a rede do cluster (Calico) usa expirou: MicroK8s instalado há muito tempo, VM restaurada de um *snapshot* ou relógio desacertado | Resolvido automaticamente: `make run-stg` deteta o erro, reinicia o `calico-node` (que gera um *token* novo) e continua. À mão: `microk8s kubectl rollout restart daemonset/calico-node -n kube-system` |
+| `O cluster não está saudável: coredns (kube-system) não ficou pronto` | O DNS interno do cluster não arranca (rede dos *pods* ou falta de recursos); sem ele os serviços não se encontram pelo nome | O comando mostra o estado do nó, os *pods* de `kube-system` e os registos do Calico. Confirmar a hora da máquina (`timedatectl`); `microk8s inspect` gera o relatório completo |
 | `não acede ao MicroK8s sem sudo` | O utilizador não pertence ao grupo `microk8s` | `sudo usermod -aG microk8s $USER` e iniciar nova sessão (secção 3.3) |
 | `keycloak não ficou pronto` ao executar `make run-stg` | Máquina com pouca memória ou CPU (o primeiro arranque do Keycloak é pesado), falta de armazenamento no cluster ou primeiro descarregamento da imagem | O comando espera até 30 minutos e, se falhar, mostra o estado dos *pods*, os eventos e os registos do Keycloak. Confirmar que DEV está parado (`make stop-dev` ou `make clean-dev`) e repetir `make run-stg`: o comando retoma onde ficou |
 | `401 Unauthorized` na autenticação, após atualizar o projeto | O Keycloak mantém as contas e permissões da versão anterior | `make reset-keycloak` no cluster; em DEV, `make clean-dev` e novo arranque |

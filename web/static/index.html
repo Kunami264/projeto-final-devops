@@ -3,65 +3,162 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
   <title>Backoffice — Clientes e Encomendas</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
+  <!-- Ícones (sprite SVG; a CSP não permite recursos externos) -->
+  <svg class="sprite" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-logo" viewBox="0 0 24 24"><path d="M21 8l-9-5-9 5v8l9 5 9-5V8z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M3 8l9 5 9-5M12 13v8" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></symbol>
+    <symbol id="i-users" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></g></symbol>
+    <symbol id="i-box" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.96L12 12.01l8.73-5.05M12 22.08V12"/></g></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></g></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6"/></g></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/></g></symbol>
+    <symbol id="i-logout" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></g></symbol>
+    <symbol id="i-layers" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></g></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6L9 17l-5-5" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-alert" viewBox="0 0 24 24"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></g></symbol>
+  </svg>
+
   <!-- Login -->
   <main id="login-view" class="login">
-    <form id="login-form" class="card">
-      <h1>Backoffice</h1>
-      <p class="muted">Gestão de clientes e encomendas</p>
+    <aside class="login-brand" aria-hidden="true">
+      <div class="brand-mark"><svg><use href="#i-logo"/></svg></div>
+      <h2>Gestão simples de clientes e encomendas.</h2>
+      <p>Registe clientes, acompanhe encomendas e mantenha tudo organizado num só lugar.</p>
+      <ul class="brand-points">
+        <li><svg><use href="#i-check"/></svg>Acesso protegido por Keycloak</li>
+        <li><svg><use href="#i-check"/></svg>Microserviços com observabilidade</li>
+        <li><svg><use href="#i-check"/></svg>Implementado em Kubernetes</li>
+      </ul>
+    </aside>
+
+    <form id="login-form" class="login-form">
+      <div class="login-title">
+        <span class="logo"><svg><use href="#i-logo"/></svg></span>
+        <div>
+          <h1>Backoffice</h1>
+          <p class="muted">Inicie sessão para continuar</p>
+        </div>
+      </div>
       <label>Utilizador
-        <input id="login-username" name="username" autocomplete="username" required autofocus>
+        <input id="login-username" name="username" autocomplete="username" placeholder="o seu utilizador" required autofocus>
       </label>
       <label>Password
-        <input id="login-password" name="password" type="password" autocomplete="current-password" required>
+        <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required>
       </label>
       <p id="login-error" class="error" role="alert" hidden></p>
-      <button type="submit" class="primary">Entrar</button>
+      <button type="submit" class="primary block">Entrar</button>
     </form>
   </main>
 
   <!-- Aplicação -->
   <div id="app-view" hidden>
     <header class="topbar">
-      <strong>Backoffice</strong>
-      <nav>
-        <button id="tab-users" class="tab active" data-tab="users">Clientes</button>
-        <button id="tab-orders" class="tab" data-tab="orders">Encomendas</button>
-      </nav>
-      <span class="spacer"></span>
-      <span id="session-user" class="muted"></span>
-      <button id="logout">Sair</button>
+      <div class="topbar-inner">
+        <span class="brand">
+          <span class="logo small"><svg><use href="#i-logo"/></svg></span>
+          Backoffice
+        </span>
+        <nav class="tabs" aria-label="Secções">
+          <button id="tab-users" class="tab active" data-tab="users"><svg><use href="#i-users"/></svg>Clientes</button>
+          <button id="tab-orders" class="tab" data-tab="orders"><svg><use href="#i-box"/></svg>Encomendas</button>
+        </nav>
+        <span class="spacer"></span>
+        <span class="session">
+          <span id="session-avatar" class="avatar" aria-hidden="true"></span>
+          <span id="session-user" class="session-name"></span>
+        </span>
+        <button id="logout" class="ghost icon-text" title="Terminar sessão"><svg><use href="#i-logout"/></svg><span>Sair</span></button>
+      </div>
     </header>
 
-    <p id="message" class="message" role="status" hidden></p>
+    <p id="message" class="toast" role="status" hidden></p>
 
     <main>
       <section id="users-panel">
         <div class="panel-head">
-          <h2>Clientes</h2>
-          <button id="new-user" class="primary">Novo cliente</button>
+          <div>
+            <h2>Clientes</h2>
+            <p class="muted">Lista de clientes registados no sistema.</p>
+          </div>
+          <button id="new-user" class="primary icon-text"><svg><use href="#i-plus"/></svg>Novo cliente</button>
         </div>
-        <table>
-          <thead><tr><th>N.º</th><th>Nome</th><th>Email</th><th></th></tr></thead>
-          <tbody id="users-body"></tbody>
-        </table>
-        <p id="users-empty" class="muted" hidden>Ainda não há clientes.</p>
+
+        <div class="stats">
+          <div class="stat"><span class="stat-icon blue"><svg><use href="#i-users"/></svg></span><div><span class="stat-label">Clientes</span><strong id="stat-users">0</strong></div></div>
+          <div class="stat"><span class="stat-icon green"><svg><use href="#i-plus"/></svg></span><div><span class="stat-label">Último registo</span><strong id="stat-users-last">—</strong></div></div>
+        </div>
+
+        <div class="card table-card">
+          <div class="table-tools">
+            <label class="search">
+              <svg><use href="#i-search"/></svg>
+              <input id="users-search" type="search" placeholder="Procurar por nome ou email" aria-label="Procurar clientes">
+            </label>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>N.º</th><th>Nome</th><th>Email</th><th><span class="sr-only">Ações</span></th></tr></thead>
+              <tbody id="users-body"></tbody>
+            </table>
+          </div>
+          <div id="users-empty" class="empty" hidden>
+            <span class="empty-icon"><svg><use href="#i-users"/></svg></span>
+            <strong>Ainda não há clientes</strong>
+            <p class="muted">Crie o primeiro cliente para começar.</p>
+          </div>
+          <div id="users-nomatch" class="empty" hidden>
+            <span class="empty-icon"><svg><use href="#i-search"/></svg></span>
+            <strong>Sem resultados</strong>
+            <p class="muted">Nenhum cliente corresponde à pesquisa.</p>
+          </div>
+        </div>
       </section>
 
       <section id="orders-panel" hidden>
         <div class="panel-head">
-          <h2>Encomendas</h2>
-          <button id="new-order" class="primary">Nova encomenda</button>
+          <div>
+            <h2>Encomendas</h2>
+            <p class="muted">Acompanhe as encomendas de todos os clientes.</p>
+          </div>
+          <button id="new-order" class="primary icon-text"><svg><use href="#i-plus"/></svg>Nova encomenda</button>
         </div>
-        <table>
-          <thead><tr><th>N.º</th><th>Cliente</th><th>Artigo</th><th>Quantidade</th><th></th></tr></thead>
-          <tbody id="orders-body"></tbody>
-        </table>
-        <p id="orders-empty" class="muted" hidden>Ainda não há encomendas.</p>
+
+        <div class="stats">
+          <div class="stat"><span class="stat-icon blue"><svg><use href="#i-box"/></svg></span><div><span class="stat-label">Encomendas</span><strong id="stat-orders">0</strong></div></div>
+          <div class="stat"><span class="stat-icon violet"><svg><use href="#i-layers"/></svg></span><div><span class="stat-label">Unidades</span><strong id="stat-units">0</strong></div></div>
+          <div class="stat"><span class="stat-icon green"><svg><use href="#i-users"/></svg></span><div><span class="stat-label">Clientes</span><strong id="stat-customers">0</strong></div></div>
+        </div>
+
+        <div class="card table-card">
+          <div class="table-tools">
+            <label class="search">
+              <svg><use href="#i-search"/></svg>
+              <input id="orders-search" type="search" placeholder="Procurar por cliente ou artigo" aria-label="Procurar encomendas">
+            </label>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>N.º</th><th>Cliente</th><th>Artigo</th><th class="num">Quantidade</th><th><span class="sr-only">Ações</span></th></tr></thead>
+              <tbody id="orders-body"></tbody>
+            </table>
+          </div>
+          <div id="orders-empty" class="empty" hidden>
+            <span class="empty-icon"><svg><use href="#i-box"/></svg></span>
+            <strong>Ainda não há encomendas</strong>
+            <p class="muted">Registe a primeira encomenda de um cliente.</p>
+          </div>
+          <div id="orders-nomatch" class="empty" hidden>
+            <span class="empty-icon"><svg><use href="#i-search"/></svg></span>
+            <strong>Sem resultados</strong>
+            <p class="muted">Nenhuma encomenda corresponde à pesquisa.</p>
+          </div>
+        </div>
       </section>
     </main>
   </div>
@@ -69,16 +166,19 @@
   <!-- Formulário de cliente -->
   <dialog id="user-dialog">
     <form id="user-form" method="dialog">
-      <h3 id="user-dialog-title">Novo cliente</h3>
+      <div class="dialog-head">
+        <span class="stat-icon blue"><svg><use href="#i-users"/></svg></span>
+        <h3 id="user-dialog-title">Novo cliente</h3>
+      </div>
       <label>Nome
-        <input id="user-name" required maxlength="120">
+        <input id="user-name" required maxlength="120" placeholder="Ex.: Maria Silva">
       </label>
       <label>Email
-        <input id="user-email" type="email" required maxlength="254">
+        <input id="user-email" type="email" required maxlength="254" placeholder="maria@exemplo.pt">
       </label>
       <p id="user-error" class="error" role="alert" hidden></p>
       <div class="actions">
-        <button type="button" data-close>Cancelar</button>
+        <button type="button" class="ghost" data-close>Cancelar</button>
         <button type="submit" class="primary">Guardar</button>
       </div>
     </form>
@@ -87,19 +187,22 @@
   <!-- Formulário de encomenda -->
   <dialog id="order-dialog">
     <form id="order-form" method="dialog">
-      <h3 id="order-dialog-title">Nova encomenda</h3>
+      <div class="dialog-head">
+        <span class="stat-icon blue"><svg><use href="#i-box"/></svg></span>
+        <h3 id="order-dialog-title">Nova encomenda</h3>
+      </div>
       <label id="order-user-field">Cliente
         <select id="order-user" required></select>
       </label>
       <label>Artigo
-        <input id="order-item" required maxlength="200">
+        <input id="order-item" required maxlength="200" placeholder="Ex.: Teclado mecânico">
       </label>
       <label>Quantidade
         <input id="order-quantity" type="number" min="1" step="1" required>
       </label>
       <p id="order-error" class="error" role="alert" hidden></p>
       <div class="actions">
-        <button type="button" data-close>Cancelar</button>
+        <button type="button" class="ghost" data-close>Cancelar</button>
         <button type="submit" class="primary">Guardar</button>
       </div>
     </form>
@@ -108,11 +211,15 @@
   <!-- Confirmação de remoção -->
   <dialog id="confirm-dialog">
     <form method="dialog">
-      <h3>Confirmar</h3>
+      <div class="dialog-head">
+        <span class="stat-icon red"><svg><use href="#i-trash"/></svg></span>
+        <h3>Confirmar remoção</h3>
+      </div>
       <p id="confirm-text"></p>
+      <p class="muted small">Esta ação não pode ser desfeita.</p>
       <div class="actions">
-        <button type="button" data-close>Cancelar</button>
-        <button id="confirm-ok" type="submit" class="danger">Apagar</button>
+        <button type="button" class="ghost" data-close>Cancelar</button>
+        <button id="confirm-ok" type="submit" class="danger-solid">Apagar</button>
       </div>
     </form>
   </dialog>
