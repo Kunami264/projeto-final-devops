@@ -710,11 +710,16 @@ run-prd: kubeconfig ## [PRD] Sobe Produção (Helm + Ingress HTTPS) com o que ST
 	@echo "===== [PRD] A aguardar que o Ingress encaminhe para os serviços (até 2 min) ====="
 	@# O --wait só garante pods prontos; o Ingress controller demora uns segundos a receber os endpoints (503 até lá)
 	@for i in $$(seq 1 60); do \
-		code=$$(curl -sk -m 5 -o /dev/null -w '%{http_code}' --resolve $(PRD_HOST):443:127.0.0.1 https://$(PRD_HOST)/users); \
-		case "$$code" in 401|200) echo "  ✓ Ingress a responder (/users -> HTTP $$code)"; exit 0 ;; esac; \
+		ok=1; codes=""; \
+		for p in /users /orders; do \
+			code=$$(curl -sk -m 5 -o /dev/null -w '%{http_code}' --resolve $(PRD_HOST):443:127.0.0.1 https://$(PRD_HOST)$$p); \
+			codes="$$codes $$p->$$code"; \
+			case "$$code" in 401|200) ;; *) ok=0 ;; esac; \
+		done; \
+		if [ $$ok = 1 ]; then echo "  ✓ Ingress a responder ($$codes )"; exit 0; fi; \
 		sleep 2; \
 	done; \
-	echo "✗ O Ingress não encaminhou para os serviços em 2 min (último HTTP $$code). Diagnóstico:"; \
+	echo "✗ O Ingress não encaminhou para os serviços em 2 min (último:$$codes). Diagnóstico:"; \
 	$(KUBECTL) get endpoints,ingress -n $(NAMESPACE_PRD) || true; \
 	$(KUBECTL) logs -n $(INGRESS_NS) -l name=nginx-ingress-microk8s --tail=30 || true; \
 	exit 1
