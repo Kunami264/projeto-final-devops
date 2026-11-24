@@ -707,6 +707,17 @@ run-prd: kubeconfig ## [PRD] Sobe Produção (Helm + Ingress HTTPS) com o que ST
 		--set ingress.className=$(INGRESS_CLASS) \
 		--set ingress.controllerNamespace=$(INGRESS_NS) \
 		--wait --timeout $(HELM_TIMEOUT) || { $(call helm_diag,$(NAMESPACE_PRD)); exit 1; }
+	@echo "===== [PRD] A aguardar que o Ingress encaminhe para os serviços (até 2 min) ====="
+	@# O --wait só garante pods prontos; o Ingress controller demora uns segundos a receber os endpoints (503 até lá)
+	@for i in $$(seq 1 60); do \
+		code=$$(curl -sk -m 5 -o /dev/null -w '%{http_code}' --resolve $(PRD_HOST):443:127.0.0.1 https://$(PRD_HOST)/users); \
+		case "$$code" in 401|200) echo "  ✓ Ingress a responder (/users -> HTTP $$code)"; exit 0 ;; esac; \
+		sleep 2; \
+	done; \
+	echo "✗ O Ingress não encaminhou para os serviços em 2 min (último HTTP $$code). Diagnóstico:"; \
+	$(KUBECTL) get endpoints,ingress -n $(NAMESPACE_PRD) || true; \
+	$(KUBECTL) logs -n $(INGRESS_NS) -l name=nginx-ingress-microk8s --tail=30 || true; \
+	exit 1
 	@$(MAKE) --no-print-directory status-prd info-prd
 
 status-prd: ## [PRD] Estado dos workloads (health-checks do Kubernetes, HPA, Ingress)
