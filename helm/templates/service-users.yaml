@@ -49,11 +49,11 @@ spec:
                 name: app-config
             - secretRef:
                 name: postgres-orders-credentials
+            - secretRef:
+                name: api-auth-secret
           env:
             - name: PYTHONDONTWRITEBYTECODE
               value: "1"
-            - name: OIDC_ALLOWED_CLIENTS
-              value: {{ .Values.oidc.allowedClientsForUsers | quote }}
           # Numa máquina lenta o arranque do Python pode passar dos ~35 s que o liveness tolera:
           # o startupProbe dá até 5 min antes de o liveness e o readiness começarem a atuar.
           startupProbe:

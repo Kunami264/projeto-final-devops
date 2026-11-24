@@ -10,7 +10,7 @@ A plataforma permite a uma organização registar os seus clientes e as respetiv
 
 ## 2. Arquitetura da solução
 
-A solução é composta por três serviços aplicacionais executados em contentores — o site de gestão, a API de clientes e a API de encomendas —, por uma base de dados PostgreSQL, pelo Keycloak, responsável pela autenticação e autorização, e pelas ferramentas de monitorização Prometheus e Grafana (DEV e STG) e Jaeger (só DEV). PRD não tem observabilidade. A API de encomendas comunica com a API de clientes para validar o cliente associado a cada encomenda. A análise de vulnerabilidades é feita pelo SonarQube (código), pelo pip-audit (dependências Python) e pelo Trivy (dependências e imagens), fora da aplicação.
+A solução é composta por três serviços aplicacionais executados em contentores — o site de gestão, a API de clientes e a API de encomendas —, por uma base de dados PostgreSQL e pelas ferramentas de monitorização Prometheus e Grafana (DEV e STG) e Jaeger (só DEV). PRD não tem observabilidade. A API de clientes trata também do login e emite os *tokens* JWT que as duas APIs validam. A API de encomendas comunica com a API de clientes para validar o cliente associado a cada encomenda. A análise de vulnerabilidades é feita pelo SonarQube (código), pelo pip-audit (dependências Python) e pelo Trivy (dependências e imagens), fora da aplicação.
 
 ![Arquitetura de alto nível (HLD) — PRD](20261110-HLDProjetoFinal-DevOps.drawio.png)
 
@@ -20,11 +20,11 @@ O HLD principal mostra o ambiente de **produção (PRD)** na perspetiva do clien
 
 1. O cliente abre `https://projeto-final.test` no browser e entra pela porta **443** (HTTPS), a única aberta na VM. A porta 80 apenas redireciona para a 443. O nome `projeto-final.test` tem de apontar para a VM: `make run-prd` indica a entrada a criar no `/etc/hosts`.
 2. O Ingress NGINX termina o HTTPS e entrega o pedido ao serviço certo: o site (`/`), a API de clientes (`/users`) ou a API de encomendas (`/orders`).
-3. No login, o Keycloak confirma o utilizador e a password e devolve um token de acesso.
+3. No login (`/auth/token`), a API de clientes confirma o utilizador e a password e devolve um token de acesso (JWT).
 4. Cada API valida o token antes de responder. A API de encomendas confirma o cliente na API de clientes.
 5. Os dados ficam no PostgreSQL, em volume persistente.
 
-As APIs, a base de dados e o Keycloak não têm porta aberta para fora, e as NetworkPolicies só permitem as ligações desenhadas. Cada ambiente tem o seu próprio HLD, todos no formato praticado nas aulas (M2-11): o servidor Ubuntu, a rede em tubo com a sub-rede, os contentores ou *pods* ligados à rede, as etiquetas de portas (VM : destino), a NAT e o painel *Network Info*. As portas de DEV estão a amarelo, as de STG a azul e as de PRD a vermelho, e os números 1 a 5 marcam nas peças os passos do percurso.
+As APIs e a base de dados não têm porta aberta para fora, e as NetworkPolicies só permitem as ligações desenhadas. Cada ambiente tem o seu próprio HLD, todos no formato praticado nas aulas (M2-11): o servidor Ubuntu, a rede em tubo com a sub-rede, os contentores ou *pods* ligados à rede, as etiquetas de portas (VM : destino), a NAT e o painel *Network Info*. As portas de DEV estão a amarelo, as de STG a azul e as de PRD a vermelho, e os números 1 a 5 marcam nas peças os passos do percurso.
 
 **DEV — Docker Compose** (acesso por `localhost`; rede `app-network` `172.30.10.0/24`, SonarQube na `sonar-network` `172.30.20.0/24`):
 
@@ -52,7 +52,7 @@ A implementação decorreu de forma incremental. Cada fase foi validada antes do
 | Fase | Trabalho realizado |
 |---|---|
 | 1. Aplicação | Desenvolvimento de dois microsserviços em Python, com o FastAPI: clientes e encomendas, com as operações de criação, consulta, edição e eliminação. Persistência dos dados em PostgreSQL. |
-| 2. Segurança da API | Integração com o Keycloak (OIDC/JWT). Cada pedido é validado quanto à autenticidade do *token* e à permissão exigida pela operação. |
+| 2. Segurança da API | Autenticação por *token* JWT (HS256) emitido pela API de clientes. Cada pedido é validado quanto à assinatura, à validade e à permissão (*scope*) exigida pela operação. Numa primeira versão usou-se o Keycloak; foi substituído por ser pesado demais para uma VM pequena (ver secção 4). |
 | 3. Contentorização | Um Dockerfile por serviço. As imagens incluem apenas as dependências de execução e são executadas por um utilizador sem privilégios. |
 | 4. Ambiente DEV | Ambiente local em Docker Compose, com todos os serviços, para desenvolvimento, testes unitários e testes de vulnerabilidades do código. |
 | 5. Ambientes STG e PRD | Kubernetes (MicroK8s) com um único *chart* Helm e um ficheiro de valores por ambiente. Em PRD: réplicas, escalonamento automático e ponto de entrada único em HTTPS. |
@@ -74,15 +74,15 @@ A implementação decorreu de forma incremental. Cada fase foi validada antes do
 | SonarQube local, a pedido | O SonarQube corre em Docker, no *profile* `sonar` do `docker-compose.yml`, fora da rede da aplicação. Só é iniciado por `make security`, com a memória limitada a cerca de 1,5 GB, e é parado no fim da análise. Não corre em STG, onde não cabe em memória ao lado do cluster; o código é o mesmo já analisado em DEV e no pipeline. As análises ficam guardadas em volume e podem ser consultadas no painel (`make sonar-up`). |
 | Portabilidade entre máquinas | O projeto é executado noutras máquinas Ubuntu, com outras permissões. `make check` verifica os programas, o acesso ao Docker sem `sudo`, as permissões de `sudo` e a memória, e indica como corrigir cada falha. O `make` pede a palavra-passe do `sudo` antes de abrir *port-forwards* e espera que fiquem ativos antes de correr os testes. Os pré-requisitos estão no README (secção 3). |
 | Dependências separadas por ambiente | `requirements-prd.txt` contém apenas as dependências de execução. O OpenTelemetry está em `requirements-tracing.txt`, só para DEV. Os módulos de teste e de análise (`pytest`, `httpx`, `pysonar`, `pip-audit`) encontram-se em `requirements-stg.txt` e `requirements-dev.txt` e não são incluídos nas imagens. |
-| Ponto de entrada único em HTTPS | Em PRD, um Ingress com TLS e redirecionamento de HTTP para HTTPS constitui o único acesso externo. Os serviços, a administração do Keycloak e as ferramentas de monitorização não são expostos. |
-| Autenticação centralizada | O Keycloak assume a autenticação e a autorização, evitando que cada serviço gira credenciais. A configuração inicial é mantida em ficheiro, o que torna os ambientes reprodutíveis. |
+| Ponto de entrada único em HTTPS | Em PRD, um Ingress com TLS e redirecionamento de HTTP para HTTPS constitui o único acesso externo. Os serviços e as ferramentas de monitorização não são expostos. |
+| Autenticação leve, sem servidor de identidade | A API de clientes emite *tokens* JWT assinados (HS256) e as duas APIs validam-nos com o mesmo segredo, guardado num Secret do Kubernetes. A versão anterior usava o Keycloak (Java): consumia 1 a 1,5 GB de memória e demorava vários minutos a arrancar, e numa VM do curso com poucos recursos o ambiente não chegava a subir. Trocá-lo tornou o projeto mais simples, leve e reprodutível, mantendo as permissões por operação (*scopes*). A API de encomendas identifica-se perante a de clientes com um *token* de serviço próprio, só com `users:read`. |
 | Sub-redes fixas em DEV | A rede da aplicação (`172.30.10.0/24`) e a das ferramentas de segurança (`172.30.20.0/24`) são definidas no `docker-compose.yml`. O plano de endereçamento fica previsível e documentado no HLD, e as ferramentas de análise ficam num segmento separado da aplicação. |
 | Rede restrita por omissão | As NetworkPolicies bloqueiam todo o tráfego no cluster e autorizam apenas as ligações necessárias entre componentes. |
-| Isolamento por *namespace* | A aplicação, a identidade e a observabilidade residem em *namespaces* distintos. O Keycloak é partilhado por STG e PRD; a monitorização serve apenas STG. |
+| Isolamento por *namespace* | STG, PRD e a observabilidade residem em *namespaces* distintos; a monitorização serve apenas STG. |
 | Persistência dos dados | A base de dados utiliza um volume persistente, que se mantém após o reinício dos serviços e a paragem do ambiente. Apenas os comandos de limpeza o eliminam. |
 | *Chart* Helm único | O mesmo *chart* serve STG e PRD; as diferenças (réplicas, HTTPS, rastreio, recursos) residem nos ficheiros de valores. |
 | Makefile como ponto de entrada | Os mesmos comandos em todos os ambientes (`build`, `run`, `test`, `clean`). O Makefile deteta o cluster e a variante do Docker Compose disponíveis e arranca o MicroK8s quando este se encontra parado. |
-| Limpeza integral | `make clean` remove os recursos do projeto no cluster (aplicação, Keycloak, monitorização, Ingress controller e imagens) e aplica a limpeza Docker completa adotada nas aulas (`compose down -v --rmi all`, `system prune -af --volumes`, `volume`, `network` e `builder prune`), bem como o ambiente virtual, os certificados, os ficheiros de acesso ao cluster e a entrada no `/etc/hosts`. |
+| Limpeza integral | `make clean` remove os recursos do projeto no cluster (aplicação, monitorização, Ingress controller e imagens) e aplica a limpeza Docker completa adotada nas aulas (`compose down -v --rmi all`, `system prune -af --volumes`, `volume`, `network` e `builder prune`), bem como o ambiente virtual, os certificados, os ficheiros de acesso ao cluster e a entrada no `/etc/hosts`. |
 | Site de gestão sem *framework* | HTML, CSS e JavaScript servidos por nginx. É suficiente para as operações necessárias e não introduz etapas de construção nem dependências adicionais. |
 
 ## 5. Ferramentas utilizadas
@@ -94,7 +94,7 @@ A implementação decorreu de forma incremental. Cada fase foi validada antes do
 | Kubernetes (MicroK8s) | Orquestração dos ambientes STG e PRD |
 | Helm | Instalação e atualização da aplicação no cluster |
 | PostgreSQL 16 | Base de dados de clientes e encomendas |
-| Keycloak 26 | Autenticação e autorização (OIDC) |
+| JWT (PyJWT, HS256) | Autenticação e autorização: login na API de clientes e validação dos *tokens* nas duas APIs |
 | nginx | Servidor do site de gestão e Ingress HTTPS em PRD |
 | Prometheus e Grafana | Métricas, painéis e alertas (DEV e STG) |
 | Jaeger e OpenTelemetry | Rastreio distribuído (DEV) |
@@ -120,8 +120,7 @@ A implementação decorreu de forma incremental. Cada fase foi validada antes do
 | pydantic | 2.12.5 | Validação dos dados recebidos |
 | sqlalchemy | 2.0.35 | Acesso à base de dados (ORM) |
 | psycopg2-binary | 2.9.11 | Ligação ao PostgreSQL |
-| pyjwt | 2.15.1 | Validação dos *tokens* de autenticação |
-| cryptography | 50.0.0 | Verificação da assinatura dos *tokens* |
+| pyjwt | 2.15.1 | Emissão (login) e validação dos *tokens* de autenticação (HS256) |
 | httpx | 0.27.2 | Comunicação entre a API de encomendas e a API de clientes |
 | prometheus-fastapi-instrumentator | 8.1.0 | Exposição de métricas para o Prometheus |
 
@@ -145,15 +144,15 @@ A implementação decorreu de forma incremental. Cada fase foi validada antes do
 
 | Tipo | Ferramenta | Ambiente | N.º | Âmbito |
 |---|---|---|---|---|
-| Unitários | pytest | DEV | 42 | Cada serviço isoladamente: operações, validação de dados, autenticação e permissões |
+| Unitários | pytest | DEV | 46 | Cada serviço isoladamente: operações, validação de dados, login, autenticação e permissões |
 | Vulnerabilidades do código | SonarQube | DEV e pipeline | — | Código das duas API, dos *scripts* e dos testes: 0 *issues* (eram 25) |
 | Vulnerabilidades das dependências | pip-audit e Trivy | DEV, STG e pipeline | 5 | Dependências Python de cada serviço: 0 vulnerabilidades |
 | Vulnerabilidades das imagens | Trivy | STG e pipeline | 3 | Imagens que seguem para PRD: 0 vulnerabilidades, em todas as severidades |
-| Integração | pytest | STG | 12 | Ciclo completo com *tokens* reais do Keycloak, comunicação entre serviços e acesso pelo site de gestão |
+| Integração | pytest | STG | 12 | Ciclo completo com *tokens* reais (login), comunicação entre serviços e acesso pelo site de gestão |
 | *Smoke* | pytest | STG | 3 | Disponibilidade dos três serviços após o *deploy* |
 
 No pipeline, os testes unitários correm no ramo `dev` e os testes de integração e *smoke* no ramo `stg`, contra o cluster; se forem aprovados, o pipeline de `stg` prepara PRD. Os resultados detalhados dos testes de vulnerabilidades estão em `tests/security/RESULTADOS.md`. No ramo `main` não são executados testes funcionais: repete-se apenas a análise de vulnerabilidades, a imagem validada em STG é promovida sem nova construção e, após aprovação manual, instalada em PRD.
 
 ## 8. Limitações e evolução
 
-A configuração entregue destina-se a demonstração e avaliação. Para uma utilização com dados reais, recomenda-se a substituição das credenciais de demonstração e do certificado autoassinado, a execução do Keycloak em modo de produção com base de dados dedicada, a definição de perfis de acesso diferenciados e a utilização de um cluster com vários nós, com cópias de segurança da base de dados.
+A configuração entregue destina-se a demonstração e avaliação. Para uma utilização com dados reais, recomenda-se a substituição das credenciais de demonstração e do certificado autoassinado, a definição de várias contas com perfis de acesso diferenciados (na base de dados ou num servidor de identidade), a limitação de tentativas de login e a utilização de um cluster com vários nós, com cópias de segurança da base de dados.

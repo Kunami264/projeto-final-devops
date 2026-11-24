@@ -1,0 +1,66 @@
+# Teste de arquitetura: confirma que a aplicação constrói e corre em x86_64 (o desenvolvimento é
+# feito em ARM). Numa máquina Ubuntu 24.04 x86_64 limpa, instala o MicroK8s, constrói as imagens,
+# sobe STG e PRD com o Makefile e confirma que respondem (testes de integração e login + CRUD em HTTPS).
+name: Teste x86
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+concurrency:
+  group: teste-x86-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  x86:
+    name: Constrói e corre em Ubuntu x86_64
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    env:
+      # O runner não abre sessão nova depois de entrar no grupo microk8s: usa-se sudo (sem password)
+      MICROK8S: sudo microk8s
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Arquitetura da máquina
+        run: |
+          echo "arquitetura: $(uname -m) · $(nproc) CPU · $(free -h | awk '/Mem/ {print $2}') RAM · $(lsb_release -ds)" \
+            | tee -a "$GITHUB_STEP_SUMMARY"
+          [ "$(uname -m)" = x86_64 ]
+
+      - name: Instalar MicroK8s e Helm
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq && sudo apt-get install -y -qq psmisc python3-venv >/dev/null
+          sudo snap install microk8s --classic --channel=1.33/stable
+          sudo snap install helm --classic
+          sudo microk8s status --wait-ready --timeout 600
+
+      - name: Construir as imagens (x86_64)
+        run: make build-stg MICROK8S="$MICROK8S"
+
+      - name: Subir STG
+        run: make run-stg MICROK8S="$MICROK8S"
+
+      - name: Testes de integração e smoke contra STG
+        run: make integration-stg MICROK8S="$MICROK8S"
+
+      - name: Subir PRD
+        run: |
+          make prepare-prd MICROK8S="$MICROK8S"
+          make run-prd MICROK8S="$MICROK8S"
+
+      - name: PRD por HTTPS (login, criar, editar e apagar)
+        run: |
+          echo "127.0.0.1 projeto-final.test" | sudo tee -a /etc/hosts
+          python3 scripts/demo.py --base-url https://projeto-final.test --insecure
+
+      - name: Diagnóstico (só em caso de falha)
+        if: failure()
+        run: |
+          sudo microk8s kubectl get pods -A -o wide || true
+          sudo microk8s kubectl get events -A --sort-by=.lastTimestamp | tail -60 || true

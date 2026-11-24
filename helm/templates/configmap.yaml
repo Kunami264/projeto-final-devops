@@ -9,5 +9,5 @@ data:
   USERS_SERVICE_URL: "http://{{ include "projeto-final.serviceFQDN" (dict "name" "service-users" "context" $) }}:8002"
   USERS_SERVICE_TIMEOUT: {{ .Values.serviceOrders.timeoutSeconds | quote }}
   USERS_SERVICE_RETRIES: {{ .Values.serviceOrders.retries | quote }}
-  OIDC_ISSUER: {{ .Values.oidc.issuer | quote }}
-  OIDC_CLIENT_ID: {{ .Values.oidc.clientId | quote }}
+  AUTH_ADMIN_USERNAME: {{ .Values.auth.adminUsername | quote }}
+  AUTH_TOKEN_TTL_SECONDS: {{ .Values.auth.tokenTtlSeconds | quote }}

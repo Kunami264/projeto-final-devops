@@ -35,8 +35,9 @@ server {
         proxy_pass $orders_upstream;
     }
 
-    location = /realms/projeto-final/protocol/openid-connect/token {
-        set $keycloak_upstream ${KEYCLOAK_URL};
-        proxy_pass $keycloak_upstream;
+    # Login: o service-users emite o token JWT
+    location = /auth/token {
+        set $users_upstream ${USERS_URL};
+        proxy_pass $users_upstream;
     }
 }

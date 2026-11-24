@@ -45,6 +45,13 @@ spec:
                 name: service-users
                 port:
                   number: 8002
+          - path: /auth
+            pathType: Prefix
+            backend:
+              service:
+                name: service-users
+                port:
+                  number: 8002
           - path: /orders
             pathType: Prefix
             backend:

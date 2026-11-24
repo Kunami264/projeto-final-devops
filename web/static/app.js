@@ -1,39 +1,27 @@
 "use strict";
 
-const TOKEN_URL = "/realms/projeto-final/protocol/openid-connect/token";
-const CLIENT_ID = "backoffice";
+const TOKEN_URL = "/auth/token";
 
-const session = { accessToken: null, refreshToken: null, username: null };
+const session = { accessToken: null, username: null };
 const state = { users: [], orders: [] };
 
 const $ = (id) => document.getElementById(id);
 
 // ───────────────────────── Autenticação ─────────────────────────
 
-async function requestToken(params) {
+async function login(username, password) {
   const resp = await fetch(TOKEN_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({ client_id: CLIENT_ID, ...params }),
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
   });
   if (!resp.ok) return false;
-  const body = await resp.json();
-  session.accessToken = body.access_token;
-  session.refreshToken = body.refresh_token || null;
+  session.accessToken = (await resp.json()).access_token;
   return true;
 }
 
-function login(username, password) {
-  return requestToken({ grant_type: "password", username, password });
-}
-
-function refresh() {
-  if (!session.refreshToken) return Promise.resolve(false);
-  return requestToken({ grant_type: "refresh_token", refresh_token: session.refreshToken });
-}
-
 function logout(message) {
-  session.accessToken = session.refreshToken = session.username = null;
+  session.accessToken = session.username = null;
   state.users = [];
   state.orders = [];
   $("app-view").hidden = true;
@@ -58,9 +46,8 @@ async function api(method, path, body) {
       body: body ? JSON.stringify(body) : undefined,
     });
 
-  let resp = await send();
-  // O token dura poucos minutos: renova-se uma vez e repete-se o pedido.
-  if (resp.status === 401 && (await refresh())) resp = await send();
+  // O token dura 30 minutos: quando expira, pede-se novo login.
+  const resp = await send();
 
   if (resp.status === 401) {
     logout("A sessão expirou. Inicie sessão novamente.");
@@ -372,7 +359,7 @@ $("login-form").addEventListener("submit", async (event) => {
   try {
     ok = await login(username, $("login-password").value);
   } catch {
-    return showError("login-error", "Sem ligação ao servidor de autenticação.");
+    return showError("login-error", "Sem ligação ao servidor.");
   }
   if (!ok) return showError("login-error", "Utilizador ou password incorretos.");
 

@@ -17,12 +17,10 @@ def _enderecos() -> dict[str, str]:
     users = os.getenv("USERS_URL", "http://localhost:8002")
     orders = os.getenv("ORDERS_URL", "http://localhost:8001")
     web = os.getenv("WEB_URL", "http://localhost:8000")
-    keycloak_mgmt = os.getenv("KEYCLOAK_MGMT_URL", "http://localhost:9000")
     return {
         "service-users": f"{users}/health",
         "service-orders": f"{orders}/health",
         "web": f"{web}/healthz",
-        "keycloak": f"{keycloak_mgmt}/health/ready",
     }
 
 
@@ -42,7 +40,7 @@ def _esperar_ambiente() -> str:
         return ""
     detalhe = ", ".join(f"{n} ({u})" for n, u in em_falta.items())
     return (f"O ambiente não respondeu em {TIMEOUT} s: {detalhe}. "
-            "Confirmar que os pods estão prontos (kubectl get pods -n staging; kubectl get pods -n auth).")
+            "Confirmar que os pods estão prontos (kubectl get pods -n staging).")
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -9,5 +9,6 @@ postgres:
   credentials:
     password: "staging-troque-esta-password"
 
-oidc:
-  clientSecret: "troque-este-segredo-service-orders-staging"
+auth:
+  adminPassword: "admin"
+  jwtSecret: "staging-segredo-jwt-troque-me-com-32-ou-mais-caracteres"

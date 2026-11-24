@@ -1,3 +1,4 @@
+import hmac
 import os
 
 from fastapi import Depends, FastAPI, HTTPException, Response
@@ -9,7 +10,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.db import Base, SessionLocal, engine, get_db
 from app.logging_setup import configure_logging
 from app.models import UserModel
-from app.security import TokenClaims, require_scope
+from app.security import TokenClaims, issue_token, require_scope
 
 SERVICE_NAME = "service-users"
 OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "jaeger:4317")
@@ -67,6 +68,29 @@ RESPONSES_NOT_FOUND = {404: {"description": USER_NOT_FOUND}}
 RESPONSES_CONFLICT = {409: {"description": EMAIL_CONFLICT}}
 RESPONSES_UPDATE = {404: {"description": USER_NOT_FOUND}, 409: {"description": EMAIL_CONFLICT}}
 
+# Conta do site de gestão e da API (o único utilizador da plataforma). As credenciais vêm de um
+# Secret (STG/PRD) ou do docker-compose.yml (DEV); o token dá acesso a todas as operações.
+ADMIN_USERNAME = os.getenv("AUTH_ADMIN_USERNAME", "admin")
+ADMIN_PASSWORD = os.getenv("AUTH_ADMIN_PASSWORD", "")
+TOKEN_TTL_SECONDS = int(os.getenv("AUTH_TOKEN_TTL_SECONDS", "1800"))
+ADMIN_SCOPES = ["users:read", "users:write", "orders:read", "orders:write"]
+INVALID_LOGIN = "Utilizador ou password incorretos"
+
+if not ADMIN_PASSWORD:
+    raise RuntimeError("AUTH_ADMIN_PASSWORD não definido — obrigatório para o login (POST /auth/token).")
+
+
+class LoginRequest(BaseModel):
+    username: str = Field(min_length=1, max_length=120)
+    password: str = Field(min_length=1, max_length=200)
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int
+
+
 SEED_USERS = [
     {"name": "Daniel Silva", "email": "daniel.silva@example.com"},
     {"name": "Ana Costa", "email": "ana.costa@example.com"},
@@ -93,6 +117,19 @@ except SQLAlchemyError as exc:
 @app.get("/health", tags=["infra"])
 def health() -> dict:
     return {"status": "ok", "service": SERVICE_NAME}
+
+
+@app.post("/auth/token", response_model=TokenResponse, tags=["auth"], responses={401: {"description": INVALID_LOGIN}})
+def login(credentials: LoginRequest) -> dict:
+    # compare_digest: o tempo de resposta não revela quantos caracteres estão certos
+    user_ok = hmac.compare_digest(credentials.username.encode(), ADMIN_USERNAME.encode())
+    password_ok = hmac.compare_digest(credentials.password.encode(), ADMIN_PASSWORD.encode())
+    if not (user_ok and password_ok):
+        logger.warning("Login recusado para '%s'", credentials.username)
+        raise HTTPException(status_code=401, detail=INVALID_LOGIN)
+    logger.info("Login de '%s'", credentials.username)
+    token = issue_token(credentials.username, ADMIN_SCOPES, TOKEN_TTL_SECONDS)
+    return {"access_token": token, "token_type": "bearer", "expires_in": TOKEN_TTL_SECONDS}
 
 
 @app.get("/users", response_model=list[User], tags=["users"])

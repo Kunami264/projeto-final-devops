@@ -11,8 +11,7 @@ from prometheus_fastapi_instrumentator import Instrumentator
 from app.db import Base, engine, get_db
 from app.logging_setup import configure_logging
 from app.models import OrderModel
-from app.oidc_client import ClientCredentialsTokenProvider
-from app.security import TokenClaims, require_scope
+from app.security import TokenClaims, issue_token, require_scope
 
 SERVICE_NAME = "service-orders"
 OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "jaeger:4317")
@@ -22,28 +21,10 @@ HTTP_CLIENT_TIMEOUT = float(os.getenv("USERS_SERVICE_TIMEOUT", "5.0"))
 HTTP_CLIENT_RETRIES = int(os.getenv("USERS_SERVICE_RETRIES", "2"))
 HTTP_CLIENT_BACKOFF_SECONDS = float(os.getenv("USERS_SERVICE_RETRY_BACKOFF", "0.3"))
 
-
-OIDC_ISSUER = os.getenv("OIDC_ISSUER")
-OIDC_TOKEN_URL = os.getenv("OIDC_TOKEN_URL") or (
-    f"{OIDC_ISSUER.rstrip('/')}/protocol/openid-connect/token" if OIDC_ISSUER else None
-)
-OIDC_CLIENT_ID = os.getenv("OIDC_CLIENT_ID", "service-orders-local")
-OIDC_CLIENT_SECRET = os.getenv("OIDC_CLIENT_SECRET", "")
+# Token de serviço com que o service-orders se identifica perante o service-users (só users:read)
+SERVICE_TOKEN_TTL_SECONDS = 60
 
 logger = configure_logging(SERVICE_NAME)
-
-if not OIDC_TOKEN_URL or not OIDC_CLIENT_SECRET:
-    logger.warning(
-        "OIDC_TOKEN_URL/OIDC_CLIENT_SECRET incompletos — as chamadas a service-users "
-        "vão falhar (sem token M2M). Ver o client 'service-orders' em k8s/auth/realm-export.json."
-    )
-    _token_provider: ClientCredentialsTokenProvider | None = None
-else:
-    _token_provider = ClientCredentialsTokenProvider(
-        token_url=OIDC_TOKEN_URL,
-        client_id=OIDC_CLIENT_ID,
-        client_secret=OIDC_CLIENT_SECRET,
-    )
 
 # OpenTelemetry só em DEV (ENABLE_TRACING=true). As bibliotecas estão em requirements-tracing.txt,
 # que não entra na imagem de STG/PRD — por isso só são importadas aqui.
@@ -102,23 +83,14 @@ RESPONSES_NOT_FOUND = {404: {"description": ORDER_NOT_FOUND}}
 RESPONSES_CREATE = {
     404: {"description": "Utilizador não encontrado em service-users"},
     502: {"description": "Falha de autenticação interna com service-users"},
-    503: {"description": "service-users ou Authorization Server (Keycloak) indisponível"},
+    503: {"description": "service-users indisponível"},
 }
-
-
-class AuthServerUnavailable(Exception):
-    """O Keycloak não emitiu o token M2M para chamar o service-users."""
 
 
 def _fetch_user_with_retry(user_id: int) -> dict:
     last_error: httpx.RequestError | None = None
-    if _token_provider is not None:
-        try:
-            headers = {"Authorization": f"Bearer {_token_provider.get_token()}"}
-        except (httpx.HTTPStatusError, httpx.RequestError) as exc:
-            raise AuthServerUnavailable() from exc
-    else:
-        headers = {}
+    service_token = issue_token(SERVICE_NAME, ["users:read"], SERVICE_TOKEN_TTL_SECONDS)
+    headers = {"Authorization": f"Bearer {service_token}"}
 
     for attempt in range(HTTP_CLIENT_RETRIES + 1):
         try:
@@ -157,11 +129,9 @@ def create_order(
 ) -> dict:
     try:
         user_data = _fetch_user_with_retry(order.user_id)
-    except AuthServerUnavailable as exc:
-        raise HTTPException(status_code=503, detail="Authorization Server (Keycloak) indisponível") from exc
     except httpx.HTTPStatusError as exc:
         if exc.response is not None and exc.response.status_code == 401:
-            logger.error("service-users rejeitou o token M2M (401) — verificar client secret / client scopes no Keycloak")
+            logger.error("service-users rejeitou o token M2M (401) — verificar que AUTH_JWT_SECRET é igual nos dois serviços")
             raise HTTPException(status_code=502, detail="Falha de autenticação interna com service-users") from exc
         raise HTTPException(status_code=404, detail="Utilizador não encontrado em service-users") from exc
     except httpx.RequestError as exc:

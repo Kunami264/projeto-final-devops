@@ -1,5 +1,12 @@
+"""Autenticação por JWT assinado (HS256), sem servidor de identidade externo.
+
+O service-users emite os tokens em POST /auth/token; as duas APIs validam-nos com o mesmo
+segredo (AUTH_JWT_SECRET, guardado num Secret do Kubernetes ou no docker-compose.yml).
+Cada endpoint exige um scope (users:read, users:write, orders:read, orders:write).
+"""
 import logging
 import os
+import time
 
 import jwt
 from fastapi import Depends, HTTPException, status
@@ -7,77 +14,63 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 logger = logging.getLogger("service-users.security")
 
-OIDC_ISSUER = os.getenv("OIDC_ISSUER")
-JWKS_TIMEOUT_SECONDS = float(os.getenv("OIDC_JWKS_TIMEOUT_SECONDS", "5"))
-ALLOWED_CLIENTS = {c.strip() for c in os.getenv("OIDC_ALLOWED_CLIENTS", "").split(",") if c.strip()}
+ALGORITHM = "HS256"
+ISSUER = os.getenv("AUTH_ISSUER", "projeto-final")
+SECRET = os.getenv("AUTH_JWT_SECRET", "")
 
-if not OIDC_ISSUER:
-
-
+if len(SECRET) < 32:
     raise RuntimeError(
-        "OIDC_ISSUER não definido — obrigatório para localizar o endpoint JWKS "
-        "do Keycloak. Ver k8s/auth/keycloak.yaml (cluster) ou docker-compose.yml (local)."
+        "AUTH_JWT_SECRET em falta ou com menos de 32 caracteres — obrigatório para assinar e "
+        "validar os tokens. Ver docker-compose.yml (DEV) ou helm/values*.yaml (STG/PRD)."
     )
-
-_JWKS_URL = f"{OIDC_ISSUER.rstrip('/')}/protocol/openid-connect/certs"
-_jwks_client = jwt.PyJWKClient(_JWKS_URL, timeout=JWKS_TIMEOUT_SECONDS, cache_keys=True)
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
 
 class TokenClaims:
-    __slots__ = ("subject", "scopes", "client_id")
+    __slots__ = ("subject", "scopes")
 
-    def __init__(self, subject: str, scopes: set[str], client_id: str | None):
+    def __init__(self, subject: str, scopes: set[str]):
         self.subject = subject
         self.scopes = scopes
-        self.client_id = client_id
 
 
-def _get_signing_key(token: str):
-    try:
-        return _jwks_client.get_signing_key_from_jwt(token).key
-    except jwt.PyJWKClientError as exc:
-        logger.exception("Falha a obter a chave de assinatura no JWKS do Keycloak")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Não foi possível validar a assinatura do token (identidade indisponível)",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
+def issue_token(subject: str, scopes: list[str], ttl_seconds: int) -> str:
+    now = int(time.time())
+    payload = {
+        "sub": subject,
+        "scope": " ".join(scopes),
+        "iss": ISSUER,
+        "iat": now,
+        "exp": now + ttl_seconds,
+    }
+    return jwt.encode(payload, SECRET, algorithm=ALGORITHM)
+
+
+def _unauthorized(detail: str) -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail=detail,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 def _decode_token(token: str) -> TokenClaims:
-    signing_key = _get_signing_key(token)
     try:
         payload = jwt.decode(
             token,
-            signing_key,
-            algorithms=["RS256"],
-            issuer=OIDC_ISSUER,
-
-
-            options={"require": ["exp", "sub", "scope"], "verify_aud": False},
+            SECRET,
+            algorithms=[ALGORITHM],
+            issuer=ISSUER,
+            options={"require": ["exp", "sub", "scope", "iss"]},
         )
     except jwt.ExpiredSignatureError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token expirado",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
+        raise _unauthorized("Token expirado") from exc
     except jwt.InvalidTokenError as exc:
         logger.warning("Token JWT rejeitado: %s", exc)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token inválido",
-            headers={"WWW-Authenticate": "Bearer"},
-        ) from exc
+        raise _unauthorized("Token inválido") from exc
 
-    scopes = set(payload.get("scope", "").split())
-    subject = payload.get("sub", "desconhecido")
-
-
-    client_id = payload.get("azp")
-    return TokenClaims(subject=subject, scopes=scopes, client_id=client_id)
+    return TokenClaims(subject=payload["sub"], scopes=set(payload["scope"].split()))
 
 
 def require_scope(*required: str):
@@ -87,31 +80,14 @@ def require_scope(*required: str):
         credentials: HTTPAuthorizationCredentials | None = Depends(_bearer_scheme),
     ) -> TokenClaims:
         if credentials is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Autenticação necessária (Bearer token em falta)",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
+            raise _unauthorized("Autenticação necessária (Bearer token em falta)")
 
         claims = _decode_token(credentials.credentials)
 
-        if ALLOWED_CLIENTS and claims.client_id not in ALLOWED_CLIENTS:
-            logger.warning(
-                "Acesso negado a '%s': client '%s' não está na allowlist %s",
-                claims.subject,
-                claims.client_id,
-                sorted(ALLOWED_CLIENTS),
-            )
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Client não autorizado para este serviço",
-            )
-
         if not (claims.scopes & required_scopes):
             logger.warning(
-                "Acesso negado a '%s' (client '%s'): scopes %s insuficientes (requer um de %s)",
+                "Acesso negado a '%s': scopes %s insuficientes (requer um de %s)",
                 claims.subject,
-                claims.client_id,
                 sorted(claims.scopes),
                 sorted(required_scopes),
             )

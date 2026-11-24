@@ -3,19 +3,19 @@ name: projeto-final
 description: >-
   Plataforma de microsserviços service-users / service-orders, com
   PostgreSQL para service-orders, autenticação/autorização Bearer JWT
-  (RS256) validada contra um Authorization Server real (Keycloak),
+  (HS256) emitida pelo service-users e validada pelas duas APIs,
   observabilidade (Prometheus com persistência para métricas, Grafana com
   dashboards e alertas provisionados, logs JSON) e um único chart
   parametrizado por ambiente (values-staging.yaml / values-production.yaml).
   Sem OpenTelemetry: o rastreio distribuído existe apenas em DEV.
 type: application
-version: 1.8.0
-appVersion: "1.5.0"
+version: 2.0.0
+appVersion: "2.0.0"
 keywords:
   - fastapi
   - microservices
   - devops
   - observability
-  - oidc
+  - jwt
 maintainers:
   - name: Daniel

@@ -16,7 +16,6 @@ COMPOSE         ?= $(shell docker compose version >/dev/null 2>&1 && echo "docke
 
 CLUSTER         ?= $(shell if command -v snap >/dev/null 2>&1 || command -v microk8s >/dev/null 2>&1; then echo microk8s; elif command -v kind >/dev/null 2>&1; then echo kind; else echo microk8s; fi)
 KIND_CLUSTER    ?= dev
-# Sem sudo: o utilizador pertence ao grupo microk8s (README, secção 3.3)
 MICROK8S        ?= microk8s
 
 ifeq ($(CLUSTER),kind)
@@ -83,7 +82,10 @@ enable_addons    = if $(KUBECTL) get daemonset/calico-node -n kube-system >/dev/
                      $(KUBECTL) rollout status daemonset/calico-node -n kube-system --timeout=300s >/dev/null 2>&1 || { $(calico_repair); }; \
                      if $(calico_broken); then $(calico_repair); fi; \
                    fi; \
-                   for a in dns hostpath-storage metrics-server; do $(MICROK8S) enable $$a; done; \
+                   for a in dns hostpath-storage metrics-server; do \
+                     if $(MICROK8S) status -a $$a 2>/dev/null | grep -qx enabled; then echo "  ✓ addon $$a já ativo"; \
+                     else echo "  a ativar o addon $$a (o MicroK8s pode pedir a password de sudo)"; $(MICROK8S) enable $$a; fi; \
+                   done; \
                    for d in coredns hostpath-provisioner; do $(wait_kube_system); done
 sudo_refresh     = case "$(KUBECTL)" in sudo*) sudo -v ;; esac
 kill_ports       = fuser -k $(foreach p,$(1),$(p)/tcp) >/dev/null 2>&1 || true
@@ -92,7 +94,7 @@ endif
 KUBECONFIG_FILE ?= kubeconfig-make.yaml
 KUBECONFIG_CMD  ?= $(MICROK8S) config
 HELM            ?= helm --kubeconfig $(KUBECONFIG_FILE)
-HELM_TIMEOUT    ?= 15m
+HELM_TIMEOUT    ?= 10m
 
 RELEASE         := projeto-final
 SERVICES        := service-users service-orders web
@@ -103,7 +105,8 @@ PRD_TAG         ?= main
 
 NAMESPACE_STG   := staging
 NAMESPACE_PRD   := production
-NAMESPACE_AUTH  := auth
+# Namespace do Keycloak de versões anteriores: só usado para o remover
+NAMESPACE_LEGACY_AUTH := auth
 NAMESPACE_OBS   := observability
 
 # PRD — ponto de entrada HTTPS (Ingress)
@@ -119,7 +122,6 @@ SONAR_PASSWORD  ?= ProjetoFinal.2026
 SONAR_GATE      := Segurança
 SONAR_ARCH      := $(shell case "$$(uname -m)" in (aarch64|arm64) echo aarch64 ;; (*) echo x64 ;; esac)
 
-# Testes de vulnerabilidades (tests/security): pip-audit e Trivy (num contentor, sem instalação)
 TRIVY_IMAGE     ?= aquasec/trivy:0.76.1
 SECURITY_REPORTS := tests/security/reports
 
@@ -128,7 +130,7 @@ PIPELINE_COMPOSE_PROJECT := projeto-final-devops
 
 DEMO_USERNAME   ?= admin
 DEMO_PASSWORD   ?= admin
-TOKEN_PATH      := /realms/projeto-final/protocol/openid-connect/token
+TOKEN_PATH      := /auth/token
 
 # ════════════════════════════════════════════════════════════════════
 # PORTAS / URLS
@@ -138,7 +140,6 @@ TOKEN_PATH      := /realms/projeto-final/protocol/openid-connect/token
 DEV_WEB_URL         := http://localhost:8000
 DEV_USERS_URL       := http://localhost:8002
 DEV_ORDERS_URL      := http://localhost:8001
-DEV_KEYCLOAK_URL    := http://localhost:8080
 DEV_JAEGER_URL      := http://localhost:16686
 DEV_PROMETHEUS_URL  := http://localhost:9090
 DEV_GRAFANA_URL     := http://localhost:3000
@@ -147,21 +148,16 @@ DEV_GRAFANA_URL     := http://localhost:3000
 STG_WEB_PORT            := 8100
 STG_USERS_PORT          := 8102
 STG_ORDERS_PORT         := 8101
-STG_KEYCLOAK_PORT       := 8180
-STG_KEYCLOAK_MGMT_PORT  := 8190
-STG_PORTS               := $(STG_WEB_PORT) $(STG_USERS_PORT) $(STG_ORDERS_PORT) $(STG_KEYCLOAK_PORT) $(STG_KEYCLOAK_MGMT_PORT)
+STG_PORTS               := $(STG_WEB_PORT) $(STG_USERS_PORT) $(STG_ORDERS_PORT)
 
 STG_WEB_URL             := http://127.0.0.1:$(STG_WEB_PORT)
 STG_USERS_URL           := http://127.0.0.1:$(STG_USERS_PORT)
 STG_ORDERS_URL          := http://127.0.0.1:$(STG_ORDERS_PORT)
-STG_KEYCLOAK_URL        := http://127.0.0.1:$(STG_KEYCLOAK_PORT)
-STG_KEYCLOAK_MGMT_URL   := http://127.0.0.1:$(STG_KEYCLOAK_MGMT_PORT)
 
-# Keycloak no cluster (partilhado por STG e PRD) e observabilidade (só STG: sem Jaeger e sem métricas de PRD)
+# Observabilidade no cluster (só STG: sem Jaeger e sem métricas de PRD)
 OBS_PROMETHEUS_PORT   := 9190
 OBS_GRAFANA_PORT      := 3100
-OBS_KEYCLOAK_PORT     := 8280
-OBS_PORTS             := $(OBS_PROMETHEUS_PORT) $(OBS_GRAFANA_PORT) $(OBS_KEYCLOAK_PORT)
+OBS_PORTS             := $(OBS_PROMETHEUS_PORT) $(OBS_GRAFANA_PORT)
 
 # ════════════════════════════════════════════════════════════════════
 # FUNÇÕES AUXILIARES
@@ -219,13 +215,29 @@ helm_diag = echo "✗ O deploy em $(1) não ficou pronto em $(HELM_TIMEOUT). Dia
 
 image = $(IMAGE_REPO)/$(1):$(2)
 
+
+ns_gone = for ns in $(1); do \
+		[ "$$($(KUBECTL) get namespace $$ns -o jsonpath='{.status.phase}' 2>/dev/null)" = Terminating ] || continue; \
+		echo "  a aguardar que o namespace $$ns acabe de ser apagado (até 2 min)"; \
+		$(KUBECTL) wait --for=delete namespace/$$ns --timeout=120s >/dev/null 2>&1 && continue; \
+		echo "  ! $$ns continua em Terminating: a forçar a remoção dos pods e dos volumes"; \
+		$(KUBECTL) delete pods --all -n $$ns --force --grace-period=0 >/dev/null 2>&1 || true; \
+		for pvc in $$($(KUBECTL) get pvc -n $$ns -o name 2>/dev/null); do \
+			$(KUBECTL) patch $$pvc -n $$ns --type=merge -p '{"metadata":{"finalizers":null}}' >/dev/null 2>&1 || true; \
+		done; \
+		$(KUBECTL) wait --for=delete namespace/$$ns --timeout=120s >/dev/null 2>&1 || { \
+			echo "✗ O namespace $$ns não termina. Ver o que o prende: $(KUBECTL) get all,pvc -n $$ns"; exit 1; }; \
+	done
+
+ns_delete = $(KUBECTL) delete namespace $(1) --ignore-not-found --wait=false; $(call ns_gone,$(1))
+
 .DEFAULT_GOAL := help
 
 .PHONY: help check \
 	build-dev run-dev test-dev demo-dev token-dev info-dev logs-dev stop-dev clean-dev \
 	build-stg run-stg test-stg integration-stg prepare-prd demo-stg forward-stg info-stg stop-stg clean-stg \
 	push-prd run-prd forward-prd status-prd info-prd stop-prd clean-prd \
-	kubeconfig run-infra reset-keycloak forward-infra clean-infra \
+	kubeconfig run-infra forward-infra clean-infra \
 	security security-deps security-images sonar sonar-up sonar-down clean-sonar \
 	lint zip clean
 
@@ -274,7 +286,7 @@ check: ## Verifica pré-requisitos e permissões da máquina (correr antes do pr
 	fi; \
 	cpus=$$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 0); \
 	if [ $$cpus -ge 4 ]; then echo "  ✓ CPU: $$cpus núcleos"; \
-	elif [ $$cpus -ge 2 ]; then echo "  ! CPU: $$cpus núcleos — funciona, mas recomendam-se 4 (o primeiro arranque do Keycloak fica muito lento)"; \
+	elif [ $$cpus -ge 2 ]; then echo "  ! CPU: $$cpus núcleos — funciona, mas recomendam-se 4"; \
 	else echo "  ✗ CPU: $$cpus núcleo — o Kubernetes precisa de pelo menos 2"; ok=0; fi; \
 	disco=$$(df -Pk . | awk 'NR==2 {printf "%d", $$4/1024/1024}'); \
 	if [ $$disco -ge 30 ]; then echo "  ✓ disco livre: $$disco GB"; \
@@ -287,7 +299,7 @@ check: ## Verifica pré-requisitos e permissões da máquina (correr antes do pr
 	if command -v systemd-detect-virt >/dev/null 2>&1; then echo "  ✓ virtualização: $$(systemd-detect-virt || true)"; fi; \
 	if command -v timedatectl >/dev/null 2>&1; then \
 		if timedatectl show -p NTPSynchronized --value 2>/dev/null | grep -qx yes; then echo "  ✓ relógio sincronizado (NTP)"; \
-		else echo "  ! relógio não sincronizado — uma hora errada invalida os tokens do cluster e do Keycloak: sudo timedatectl set-ntp true"; fi; \
+		else echo "  ! relógio não sincronizado — uma hora errada invalida os tokens do cluster e da aplicação: sudo timedatectl set-ntp true"; fi; \
 	fi; \
 	if [ $$ok = 1 ]; then echo "===== Máquina pronta ✅ ====="; else echo "===== Corrigir os pontos assinalados com ✗ e voltar a correr make check ====="; exit 1; fi
 
@@ -297,7 +309,7 @@ check: ## Verifica pré-requisitos e permissões da máquina (correr antes do pr
 
 $(VENV_PY):
 	@echo "===== [PYTHON] A criar ambiente virtual em $(VENV_DIR) ====="
-	$(PYTHON) -m venv $(VENV_DIR)
+	$(PYTHON) -m venv --clear $(VENV_DIR)
 	$(VENV_PY) -m pip install --quiet --upgrade pip
 
 $(STAMP_DEV): requirements-dev.txt requirements-stg.txt requirements-prd.txt $(wildcard service-*/requirements*.txt) | $(VENV_PY)
@@ -347,7 +359,6 @@ info-dev: ## [DEV] Mostra endereços e credenciais do ambiente local
 	@echo "  BACKOFFICE (aplicação)      $(DEV_WEB_URL)       $(DEMO_USERNAME) / $(DEMO_PASSWORD)"
 	@echo "  API utilizadores (Swagger)  $(DEV_USERS_URL)/docs  token: make token-dev"
 	@echo "  API encomendas   (Swagger)  $(DEV_ORDERS_URL)/docs  token: make token-dev"
-	@echo "  Keycloak (consola admin)    $(DEV_KEYCLOAK_URL)       admin / admin"
 	@echo "  Grafana                     $(DEV_GRAFANA_URL)       admin / admin"
 	@echo "  Prometheus                  $(DEV_PROMETHEUS_URL)       sem login"
 	@echo "  Jaeger (só em DEV)          $(DEV_JAEGER_URL)      sem login"
@@ -441,12 +452,11 @@ clean-sonar: ## Remove o SonarQube: contentor, volumes (análises) e imagem
 	rm -rf .scannerwork
 
 demo-dev: ## [DEV] Cria, edita e apaga um utilizador e uma encomenda (ciclo completo)
-	@USERS_URL=$(DEV_USERS_URL) ORDERS_URL=$(DEV_ORDERS_URL) KEYCLOAK_BASE_URL=$(DEV_KEYCLOAK_URL) \
+	@USERS_URL=$(DEV_USERS_URL) ORDERS_URL=$(DEV_ORDERS_URL) \
 		$(PYTHON) scripts/demo.py --username '$(DEMO_USERNAME)' --password '$(DEMO_PASSWORD)'
 
 token-dev: $(STAMP_DEV) ## [DEV]  Imprime um token de acesso (para o Swagger ou curl)
-	@$(VENV_PY) scripts/get_token.py --grant password \
-		--token-url $(DEV_KEYCLOAK_URL)$(TOKEN_PATH) \
+	@$(VENV_PY) scripts/get_token.py --token-url $(DEV_USERS_URL)$(TOKEN_PATH) \
 		--username '$(DEMO_USERNAME)' --password '$(DEMO_PASSWORD)'
 
 logs-dev: ## [DEV] Acompanha os logs dos containers
@@ -475,14 +485,18 @@ clean-dev: ## [DEV] Limpeza Docker completa: compose down, stop, system/volume/n
 	-$(DOCKER) system df
 
 # ════════════════════════════════════════════════════════════════════
-# INFRAESTRUTURA PARTILHADA NO CLUSTER — Keycloak + Observabilidade
+# INFRAESTRUTURA DO CLUSTER — Observabilidade de STG (Prometheus + Grafana)
+# (aplicada por run-stg; PRD não tem observabilidade)
 # ════════════════════════════════════════════════════════════════════
 
-run-infra: ## [K8S] Aplica Keycloak, Prometheus e Grafana no cluster
+run-infra: ## [K8S] Prepara o cluster (DNS, armazenamento) e aplica Prometheus e Grafana
 	@echo "===== [K8S] Addons do cluster (DNS e armazenamento) ====="
 	@$(enable_addons)
-	@echo "===== [K8S] Keycloak (namespace $(NAMESPACE_AUTH)) ====="
-	$(KUBECTL) apply -f k8s/auth/keycloak.yaml -f k8s/auth/networkpolicy.yaml
+	@if $(KUBECTL) get namespace $(NAMESPACE_LEGACY_AUTH) >/dev/null 2>&1; then \
+		echo "===== [K8S] A remover o Keycloak de uma versão anterior do projeto (namespace $(NAMESPACE_LEGACY_AUTH)) ====="; \
+		$(call ns_delete,$(NAMESPACE_LEGACY_AUTH)); \
+	fi
+	@$(call ns_gone,$(NAMESPACE_OBS))
 	@echo "===== [K8S] Observabilidade (namespace $(NAMESPACE_OBS)) ====="
 	@antes=$$($(prometheus_config_sum)); \
 	$(KUBECTL) apply \
@@ -496,24 +510,14 @@ run-infra: ## [K8S] Aplica Keycloak, Prometheus e Grafana no cluster
 		$(KUBECTL) rollout restart deployment/prometheus -n $(NAMESPACE_OBS); \
 	fi
 	@echo "===== [K8S] A aguardar que fiquem prontos ====="
-	@$(call rollout,keycloak,$(NAMESPACE_AUTH),1800s)
-	@$(call rollout,prometheus,$(NAMESPACE_OBS),180s)
-	@$(call rollout,grafana,$(NAMESPACE_OBS),180s)
+	@$(call rollout,prometheus,$(NAMESPACE_OBS),300s)
+	@$(call rollout,grafana,$(NAMESPACE_OBS),300s)
 
-reset-keycloak: ## [K8S] Repõe o Keycloak a partir de realm-export.json (apaga contas criadas à mão)
-	@echo "===== [K8S] A apagar os dados do Keycloak para reimportar o realm ====="
-	-$(KUBECTL) delete deployment keycloak -n $(NAMESPACE_AUTH) --ignore-not-found --wait=true
-	-$(KUBECTL) delete pvc keycloak-data-pvc -n $(NAMESPACE_AUTH) --ignore-not-found --wait=true
-	$(KUBECTL) apply -f k8s/auth/keycloak.yaml -f k8s/auth/networkpolicy.yaml
-	@$(call rollout,keycloak,$(NAMESPACE_AUTH),1800s)
-	@echo "===== [K8S] Keycloak reposto: login admin / admin ====="
-
-forward-infra: ## [K8S] Port-forward de Grafana e Prometheus (STG) e da consola do Keycloak
+forward-infra: ## [K8S] Port-forward de Grafana e Prometheus (observabilidade de STG)
 	@echo ""
-	@echo "===== [K8S] Observabilidade de STG (não há em PRD) e consola do Keycloak ====="
+	@echo "===== [K8S] Observabilidade de STG (não há em PRD) ====="
 	@echo "  Grafana                   http://localhost:$(OBS_GRAFANA_PORT)      admin / admin"
 	@echo "  Prometheus                http://localhost:$(OBS_PROMETHEUS_PORT)      sem login"
-	@echo "  Keycloak (consola admin)  http://localhost:$(OBS_KEYCLOAK_PORT)      admin / admin"
 	@echo "  Ctrl+C para sair."
 	@echo ""
 	@$(sudo_refresh)
@@ -521,13 +525,12 @@ forward-infra: ## [K8S] Port-forward de Grafana e Prometheus (STG) e da consola 
 	trap '$(call kill_ports,$(OBS_PORTS))' EXIT INT TERM; \
 	$(call forward,$(NAMESPACE_OBS),grafana,$(OBS_GRAFANA_PORT),3000) \
 	$(call forward,$(NAMESPACE_OBS),prometheus,$(OBS_PROMETHEUS_PORT),9090) \
-	$(call forward,$(NAMESPACE_AUTH),keycloak,$(OBS_KEYCLOAK_PORT),8080) \
 	wait
 
-clean-infra: ## [K8S] Remove Keycloak, monitorização, Ingress controller, RBAC de cluster e imagens de terceiros
-	@echo "===== [CLEAN K8S] Namespaces $(NAMESPACE_AUTH) e $(NAMESPACE_OBS) (inclui PVCs e Secrets) ====="
+clean-infra: ## [K8S] Remove a monitorização, o Ingress controller, o RBAC de cluster e as imagens de terceiros
+	@echo "===== [CLEAN K8S] Namespace $(NAMESPACE_OBS) (inclui PVCs) e Keycloak de versões anteriores ====="
 	-@$(MAKE) --no-print-directory kubeconfig
-	-$(KUBECTL) delete namespace $(NAMESPACE_AUTH) $(NAMESPACE_OBS) --ignore-not-found --wait=true --timeout=180s
+	-@$(call ns_delete,$(NAMESPACE_OBS) $(NAMESPACE_LEGACY_AUTH))
 	@echo "===== [CLEAN K8S] Recursos de cluster do Prometheus ====="
 	-$(KUBECTL) delete clusterrolebinding prometheus-scraper --ignore-not-found
 	-$(KUBECTL) delete clusterrole prometheus-scraper --ignore-not-found
@@ -570,6 +573,7 @@ run-stg: kubeconfig run-infra ## [STG] Faz o deploy em Staging (Helm) e prepara 
 	@echo "===== [STG] Ingress controller (usado por PRD) ====="
 	$(enable_ingress)
 	@echo "===== [STG] Deploy via Helm ====="
+	@$(call ns_gone,$(NAMESPACE_STG))
 	@$(call helm_unstick,$(NAMESPACE_STG))
 	$(HELM) upgrade --install $(RELEASE) ./helm \
 		-n $(NAMESPACE_STG) --create-namespace \
@@ -585,7 +589,7 @@ info-stg: ## [STG] Mostra como aceder ao ambiente de Staging
 	@echo "  Validar o ambiente (integração + smoke)   make test-stg"
 	@echo "  Criar/editar/apagar utilizadores e encomendas    make demo-stg"
 	@echo "  Backoffice e APIs (port-forward)          make forward-stg"
-	@echo "  Grafana / Prometheus / Keycloak         make forward-infra"
+	@echo "  Grafana / Prometheus                      make forward-infra"
 	@echo ""
 
 test-stg: integration-stg ## [STG] Testes de integração, smoke e de vulnerabilidades (pip-audit, Trivy às imagens); se passarem, prepara PRD
@@ -601,15 +605,11 @@ integration-stg: $(STAMP_STG) ## [STG] Apenas os testes de integração e smoke 
 	trap '$(call kill_ports,$(STG_PORTS))' EXIT; \
 	$(call forward,$(NAMESPACE_STG),service-users,$(STG_USERS_PORT),8002) \
 	$(call forward,$(NAMESPACE_STG),service-orders,$(STG_ORDERS_PORT),8001) \
-	$(call forward,$(NAMESPACE_AUTH),keycloak,$(STG_KEYCLOAK_PORT),8080) \
-	$(call forward,$(NAMESPACE_AUTH),keycloak,$(STG_KEYCLOAK_MGMT_PORT),9000) \
 	$(call forward,$(NAMESPACE_STG),web,$(STG_WEB_PORT),8080) \
 	$(call wait_ports,$(STG_PORTS)); \
 	WEB_URL=$(STG_WEB_URL) \
 	USERS_URL=$(STG_USERS_URL) \
 	ORDERS_URL=$(STG_ORDERS_URL) \
-	KEYCLOAK_BASE_URL=$(STG_KEYCLOAK_URL) \
-	KEYCLOAK_MGMT_URL=$(STG_KEYCLOAK_MGMT_URL) \
 	$(VENV_PY) -m pytest tests/integration/ tests/smoke/ -v
 
 prepare-prd: kubeconfig
@@ -621,12 +621,11 @@ prepare-prd: kubeconfig
 	done
 	@echo "===== [STG→PRD] Certificado TLS de PRD no cluster ====="
 	@[ -f $(CERT_DIR)/tls.crt ] || { echo "✗ Falta o certificado em $(CERT_DIR): make build-stg"; exit 1; }
-	@for ns in $(NAMESPACE_PRD) $(NAMESPACE_AUTH); do \
-		$(KUBECTL) create namespace $$ns --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null; \
-		$(KUBECTL) create secret tls $(TLS_SECRET) -n $$ns \
-			--cert=$(CERT_DIR)/tls.crt --key=$(CERT_DIR)/tls.key \
-			--dry-run=client -o yaml | $(KUBECTL) apply -f -; \
-	done
+	@$(call ns_gone,$(NAMESPACE_PRD))
+	@$(KUBECTL) create namespace $(NAMESPACE_PRD) --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null
+	@$(KUBECTL) create secret tls $(TLS_SECRET) -n $(NAMESPACE_PRD) \
+		--cert=$(CERT_DIR)/tls.crt --key=$(CERT_DIR)/tls.key \
+		--dry-run=client -o yaml | $(KUBECTL) apply -f -
 	@echo "===== [STG] ✅ PRD está pronto a subir: make run-prd ====="
 
 demo-stg: ## [STG] Cria, edita e apaga um utilizador e uma encomenda em Staging
@@ -635,18 +634,17 @@ demo-stg: ## [STG] Cria, edita e apaga um utilizador e uma encomenda em Staging
 	trap '$(call kill_ports,$(STG_PORTS))' EXIT; \
 	$(call forward,$(NAMESPACE_STG),service-users,$(STG_USERS_PORT),8002) \
 	$(call forward,$(NAMESPACE_STG),service-orders,$(STG_ORDERS_PORT),8001) \
-	$(call forward,$(NAMESPACE_AUTH),keycloak,$(STG_KEYCLOAK_PORT),8080) \
-	$(call wait_ports,$(STG_USERS_PORT) $(STG_ORDERS_PORT) $(STG_KEYCLOAK_PORT)); \
-	USERS_URL=$(STG_USERS_URL) ORDERS_URL=$(STG_ORDERS_URL) KEYCLOAK_BASE_URL=$(STG_KEYCLOAK_URL) \
+	$(call wait_ports,$(STG_USERS_PORT) $(STG_ORDERS_PORT)); \
+	USERS_URL=$(STG_USERS_URL) ORDERS_URL=$(STG_ORDERS_URL) \
 	$(PYTHON) scripts/demo.py --username '$(DEMO_USERNAME)' --password '$(DEMO_PASSWORD)'
 
-forward-stg: ## [STG] Port-forward das APIs e do Keycloak de Staging (uso manual)
+forward-stg: ## [STG] Port-forward do site e das APIs de Staging (uso manual)
 	@echo ""
 	@echo "===== [STG] Port-forward ativo ====="
 	@echo "  BACKOFFICE (aplicação)      $(STG_WEB_URL)       $(DEMO_USERNAME) / $(DEMO_PASSWORD)"
 	@echo "  API utilizadores (Swagger)  $(STG_USERS_URL)/docs"
 	@echo "  API encomendas   (Swagger)  $(STG_ORDERS_URL)/docs"
-	@echo "  Keycloak (token)            $(STG_KEYCLOAK_URL)$(TOKEN_PATH)"
+	@echo "  Token (login)               $(STG_USERS_URL)$(TOKEN_PATH)"
 	@echo "  Ctrl+C para sair."
 	@echo ""
 	@$(sudo_refresh)
@@ -655,7 +653,6 @@ forward-stg: ## [STG] Port-forward das APIs e do Keycloak de Staging (uso manual
 	$(call forward,$(NAMESPACE_STG),web,$(STG_WEB_PORT),8080) \
 	$(call forward,$(NAMESPACE_STG),service-users,$(STG_USERS_PORT),8002) \
 	$(call forward,$(NAMESPACE_STG),service-orders,$(STG_ORDERS_PORT),8001) \
-	$(call forward,$(NAMESPACE_AUTH),keycloak,$(STG_KEYCLOAK_PORT),8080) \
 	wait
 
 stop-stg: ## [STG] Remove a release de Staging (mantém namespace, imagens e infraestrutura)
@@ -667,7 +664,7 @@ clean-stg: ## [STG] Limpeza completa de STG (lógica das aulas): release, namesp
 	-@$(MAKE) --no-print-directory kubeconfig
 	-$(HELM) uninstall $(RELEASE) -n $(NAMESPACE_STG) --wait
 	@echo "===== [CLEAN STG] Namespace $(NAMESPACE_STG): pods, services, volumes (PVC), secrets, network policies ====="
-	-$(KUBECTL) delete namespace $(NAMESPACE_STG) --ignore-not-found --wait=true --timeout=180s
+	-@$(call ns_delete,$(NAMESPACE_STG))
 	@echo "===== [CLEAN STG] Volumes persistentes órfãos ====="
 	-@$(call orphan_pvs,$(NAMESPACE_STG))
 	@echo "===== [CLEAN STG] Imagens do projeto no cluster (todas as tags) ====="
@@ -697,15 +694,9 @@ run-prd: kubeconfig ## [PRD] Sobe Produção (Helm + Ingress HTTPS) com o que ST
 	for svc in $(SERVICES); do \
 		$(DOCKER) image inspect $(IMAGE_REPO)/$$svc:$(PRD_TAG) >/dev/null 2>&1 || { echo "  ✗ imagem $$svc:$(PRD_TAG) em falta"; ok=0; }; \
 	done; \
-	for ns in $(NAMESPACE_PRD) $(NAMESPACE_AUTH); do \
-		$(KUBECTL) get secret $(TLS_SECRET) -n $$ns >/dev/null 2>&1 || { echo "  ✗ certificado TLS em falta no namespace $$ns"; ok=0; }; \
-	done; \
-	$(KUBECTL) get deployment keycloak -n $(NAMESPACE_AUTH) >/dev/null 2>&1 || { echo "  ✗ Keycloak não instalado"; ok=0; }; \
+	$(KUBECTL) get secret $(TLS_SECRET) -n $(NAMESPACE_PRD) >/dev/null 2>&1 || { echo "  ✗ certificado TLS em falta no namespace $(NAMESPACE_PRD)"; ok=0; }; \
 	if [ $$ok = 0 ]; then echo "PRD não está preparado. Executar primeiro: make build-stg run-stg test-stg"; exit 1; fi; \
-	echo "  ✓ imagens, certificado e Keycloak presentes"
-	@echo "===== [PRD] Endpoint de token do Keycloak atrás do Ingress HTTPS ====="
-	sed -e 's/__PRD_HOST__/$(PRD_HOST)/g' -e 's/__INGRESS_CLASS__/$(INGRESS_CLASS)/g' \
-		k8s/ingress/keycloak-token-prd.yaml | $(KUBECTL) apply -f -
+	echo "  ✓ imagens e certificado presentes"
 	@echo "===== [PRD] Start via Helm ====="
 	@$(call helm_unstick,$(NAMESPACE_PRD))
 	$(HELM) upgrade --install $(RELEASE) ./helm \
@@ -726,7 +717,7 @@ info-prd: ## [PRD] Mostra como aceder a Produção
 	@echo "===== [PRD] Produção disponível em $(PRD_URL) ✅ ====="
 	@echo "  BACKOFFICE     $(PRD_URL)/          $(DEMO_USERNAME) / $(DEMO_PASSWORD)"
 	@echo "  API            $(PRD_URL)/users  ·  $(PRD_URL)/orders"
-	@echo "  Token          $(PRD_URL)$(TOKEN_PATH)"
+	@echo "  Token (login)  $(PRD_URL)$(TOKEN_PATH)"
 	@echo ""
 	@echo "  1) O host tem de resolver para a máquina do cluster (só uma vez):"
 	@echo "       echo '127.0.0.1 $(PRD_HOST)' | sudo tee -a /etc/hosts"
@@ -761,12 +752,9 @@ clean-prd: ## [PRD] Limpeza completa de PRD (lógica das aulas): release, namesp
 	-@$(MAKE) --no-print-directory kubeconfig
 	-$(HELM) uninstall $(RELEASE) -n $(NAMESPACE_PRD) --wait
 	@echo "===== [CLEAN PRD] Namespace $(NAMESPACE_PRD): pods, services, volumes (PVC), secrets, Ingress, HPA ====="
-	-$(KUBECTL) delete namespace $(NAMESPACE_PRD) --ignore-not-found --wait=true --timeout=180s
+	-@$(call ns_delete,$(NAMESPACE_PRD))
 	@echo "===== [CLEAN PRD] Volumes persistentes órfãos ====="
 	-@$(call orphan_pvs,$(NAMESPACE_PRD))
-	@echo "===== [CLEAN PRD] Ingress do token e Secret TLS no namespace $(NAMESPACE_AUTH) ====="
-	-$(KUBECTL) delete ingress keycloak-token -n $(NAMESPACE_AUTH) --ignore-not-found
-	-$(KUBECTL) delete secret $(TLS_SECRET) -n $(NAMESPACE_AUTH) --ignore-not-found
 	@echo "===== [CLEAN PRD] Imagens promovidas para PRD ($(PRD_TAG)) no cluster e no Docker ====="
 	-@$(call cluster_clean_images,$(IMAGE_REPO)/.*:$(PRD_TAG)$$)
 	-@for img in $$($(DOCKER) images --format '{{.Repository}}:{{.Tag}}' | grep -E '^$(IMAGE_REPO)/.*:$(PRD_TAG)$$'); do \
@@ -800,7 +788,7 @@ clean: clean-prd clean-stg clean-infra clean-dev clean-sonar ## Limpa TUDO: PRD,
 	@$(call kill_ports,$(OBS_PORTS))
 	@echo ""
 	@echo "===== [CLEAN] Tudo removido ✅ ====="
-	@echo "  Cluster: releases Helm, namespaces $(NAMESPACE_PRD)/$(NAMESPACE_STG)/$(NAMESPACE_AUTH)/$(NAMESPACE_OBS),"
+	@echo "  Cluster: releases Helm, namespaces $(NAMESPACE_PRD)/$(NAMESPACE_STG)/$(NAMESPACE_OBS),"
 	@echo "           PVCs, Secrets, Ingress e Ingress controller, ClusterRole/Binding,"
 	@echo "           imagens do projeto e imagens de terceiros carregadas no cluster."
 	@echo "  Docker:  todos os contentores parados; imagens, volumes, redes e cache de build removidos"

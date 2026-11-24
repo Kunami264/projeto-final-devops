@@ -58,21 +58,43 @@ def test_get_user_with_malformed_token_returns_401():
     assert r.status_code == 401
 
 
-def test_azp_allowlist_rejects_client_not_in_list(auth_headers, monkeypatch):
-    from app import security
-
-    monkeypatch.setattr(security, "ALLOWED_CLIENTS", {"service-orders-production"})
-
-    r = client.get("/users/1", headers=auth_headers)
-    assert r.status_code == 403
+def test_token_signed_with_another_secret_returns_401(make_token):
+    token = make_token("users:read", secret="outro-segredo-qualquer-com-32-ou-mais-caracteres")
+    r = client.get("/users/1", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 401
 
 
-def test_azp_allowlist_accepts_client_in_list(auth_headers, monkeypatch):
-    from app import security
+def test_token_from_another_issuer_returns_401(make_token):
+    token = make_token("users:read", issuer="outro-emissor")
+    r = client.get("/users/1", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 401
 
-    monkeypatch.setattr(security, "ALLOWED_CLIENTS", {"api-cli"})
-    r = client.get("/users/1", headers=auth_headers)
+
+def test_login_returns_token_with_all_scopes():
+    r = client.post("/auth/token", json={"username": "admin", "password": "password-de-testes"})
     assert r.status_code == 200
+    body = r.json()
+    assert body["token_type"] == "bearer"
+    assert body["expires_in"] > 0
+
+    headers = {"Authorization": f"Bearer {body['access_token']}"}
+    assert client.get("/users", headers=headers).status_code == 200
+    novo = client.post("/users", json={"name": "Via Login", "email": "via.login@example.com"}, headers=headers)
+    assert novo.status_code == 201
+
+
+def test_login_with_wrong_password_returns_401():
+    r = client.post("/auth/token", json={"username": "admin", "password": "errada"})
+    assert r.status_code == 401
+
+
+def test_login_with_unknown_user_returns_401():
+    r = client.post("/auth/token", json={"username": "outro", "password": "password-de-testes"})
+    assert r.status_code == 401
+
+
+def test_login_without_fields_returns_422():
+    assert client.post("/auth/token", json={}).status_code == 422
 
 
 def test_create_user(write_headers, auth_headers):

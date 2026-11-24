@@ -200,10 +200,9 @@ jobs:
         run: |
           set -euo pipefail
           for i in $(seq 1 180); do
-            K=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9000/health/ready || true)
             U=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8002/health || true)
             O=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:8001/health || true)
-            if [ "$K" = "200" ] && [ "$U" = "200" ] && [ "$O" = "200" ]; then
+            if [ "$U" = "200" ] && [ "$O" = "200" ]; then
               echo "Serviços prontos ao fim de ${i}s"
               exit 0
             fi
@@ -349,11 +348,8 @@ jobs:
           microk8s config > kubeconfig-stg.yaml
           echo "KUBECONFIG=$PWD/kubeconfig-stg.yaml" >> "$GITHUB_ENV"
 
-      - name: Aplicar Keycloak (namespace auth)
-        run: |
-          set -euo pipefail
-          kubectl apply -f k8s/auth/keycloak.yaml -f k8s/auth/networkpolicy.yaml
-          kubectl -n auth rollout status deployment/keycloak --timeout=600s
+      - name: Remover o Keycloak de versões anteriores (namespace auth)
+        run: kubectl delete namespace auth --ignore-not-found --wait=true --timeout=300s
 
       # Sem Jaeger: o OpenTelemetry existe apenas em DEV
       - name: Aplicar monitorização (Prometheus, Grafana)
@@ -382,16 +378,18 @@ jobs:
           kubectl -n observability rollout status deployment/grafana --timeout=90s
 
       - name: Deploy no Kubernetes via Helm
+        env:
+          AUTH_JWT_SECRET: ${{ secrets.AUTH_JWT_SECRET_STG }}
+          AUTH_ADMIN_PASSWORD: ${{ secrets.AUTH_ADMIN_PASSWORD_STG }}
         run: |
           set -euo pipefail
           umask 077
           kubectl get nodes
 
-          cat > secret-values.yaml <<EOF
-          oidc:
-            clientSecret: "${{ secrets.OIDC_CLIENT_SECRET_STG }}"
-            requireClientSecret: true
-          EOF
+          # Segredos do GitHub (opcionais): se existirem, substituem os valores de exemplo do values-*.yaml
+          extra=()
+          if [ -n "${AUTH_JWT_SECRET:-}" ]; then extra+=(--set-string "auth.jwtSecret=$AUTH_JWT_SECRET"); fi
+          if [ -n "${AUTH_ADMIN_PASSWORD:-}" ]; then extra+=(--set-string "auth.adminPassword=$AUTH_ADMIN_PASSWORD"); fi
 
           if helm status projeto-final -n staging >/dev/null 2>&1 && \
              ! helm history projeto-final -n staging 2>/dev/null | grep -qw deployed; then
@@ -402,7 +400,7 @@ jobs:
           helm upgrade --install projeto-final ./helm \
             -n staging --create-namespace \
             -f ./helm/values-staging.yaml \
-            -f secret-values.yaml \
+            "${extra[@]}" \
             --set image.tag="sha-${{ github.sha }}" \
             --wait --timeout 5m
 
@@ -421,9 +419,7 @@ jobs:
         run: |
           set -euo pipefail
           microk8s enable ingress
-          for ns in production auth; do
-            kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
-          done
+          kubectl create namespace production --dry-run=client -o yaml | kubectl apply -f -
           if kubectl get secret projeto-final-tls -n production >/dev/null 2>&1; then
             echo "Certificado TLS de PRD já existe."
           else
@@ -431,11 +427,9 @@ jobs:
             openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
               -keyout "$RUNNER_TEMP/tls.key" -out "$RUNNER_TEMP/tls.crt" \
               -subj "/CN=$PRD_HOST" -addext "subjectAltName=DNS:$PRD_HOST" 2>/dev/null
-            for ns in production auth; do
-              kubectl create secret tls projeto-final-tls -n "$ns" \
-                --cert="$RUNNER_TEMP/tls.crt" --key="$RUNNER_TEMP/tls.key" \
-                --dry-run=client -o yaml | kubectl apply -f -
-            done
+            kubectl create secret tls projeto-final-tls -n production \
+              --cert="$RUNNER_TEMP/tls.crt" --key="$RUNNER_TEMP/tls.key" \
+              --dry-run=client -o yaml | kubectl apply -f -
             shred -u "$RUNNER_TEMP/tls.key" "$RUNNER_TEMP/tls.crt" 2>/dev/null || rm -f "$RUNNER_TEMP/tls.key" "$RUNNER_TEMP/tls.crt"
           fi
 
@@ -548,35 +542,30 @@ jobs:
           microk8s config > kubeconfig-prd.yaml
           echo "KUBECONFIG=$PWD/kubeconfig-prd.yaml" >> "$GITHUB_ENV"
 
-      - name: Aplicar Keycloak (namespace auth)
-        run: |
-          set -euo pipefail
-          kubectl apply -f k8s/auth/keycloak.yaml -f k8s/auth/networkpolicy.yaml
-          kubectl -n auth rollout status deployment/keycloak --timeout=600s
+      - name: Remover o Keycloak de versões anteriores (namespace auth)
+        run: kubectl delete namespace auth --ignore-not-found --wait=true --timeout=300s
 
       - name: Verificar pré-requisitos preparados em STG
         run: |
           set -euo pipefail
           microk8s status -a ingress | grep -q enabled || {
             echo "Ingress controller não ativo: o pipeline de stg tem de correr com sucesso antes de PRD."; exit 1; }
-          for ns in production auth; do
-            kubectl get secret projeto-final-tls -n "$ns" >/dev/null 2>&1 || {
-              echo "Certificado TLS em falta no namespace $ns: o pipeline de stg tem de correr com sucesso antes de PRD."; exit 1; }
-          done
-          sed -e "s/__PRD_HOST__/$PRD_HOST/g" -e "s/__INGRESS_CLASS__/public/g" \
-            k8s/ingress/keycloak-token-prd.yaml | kubectl apply -f -
+          kubectl get secret projeto-final-tls -n production >/dev/null 2>&1 || {
+            echo "Certificado TLS em falta no namespace production: o pipeline de stg tem de correr com sucesso antes de PRD."; exit 1; }
 
       - name: Deploy no Kubernetes via Helm (namespace production)
+        env:
+          AUTH_JWT_SECRET: ${{ secrets.AUTH_JWT_SECRET_PRD }}
+          AUTH_ADMIN_PASSWORD: ${{ secrets.AUTH_ADMIN_PASSWORD_PRD }}
         run: |
           set -euo pipefail
           umask 077
           kubectl get nodes
 
-          cat > secret-values.yaml <<EOF
-          oidc:
-            clientSecret: "${{ secrets.OIDC_CLIENT_SECRET_PRD }}"
-            requireClientSecret: true
-          EOF
+          # Segredos do GitHub (opcionais): se existirem, substituem os valores de exemplo do values-*.yaml
+          extra=()
+          if [ -n "${AUTH_JWT_SECRET:-}" ]; then extra+=(--set-string "auth.jwtSecret=$AUTH_JWT_SECRET"); fi
+          if [ -n "${AUTH_ADMIN_PASSWORD:-}" ]; then extra+=(--set-string "auth.adminPassword=$AUTH_ADMIN_PASSWORD"); fi
 
           if helm status projeto-final -n production >/dev/null 2>&1 && \
              ! helm history projeto-final -n production 2>/dev/null | grep -qw deployed; then
@@ -587,7 +576,7 @@ jobs:
           helm upgrade --install projeto-final ./helm \
             -n production --create-namespace \
             -f ./helm/values-production.yaml \
-            -f secret-values.yaml \
+            "${extra[@]}" \
             --set image.tag="sha-${{ github.sha }}" \
             --set ingress.host="$PRD_HOST" \
             --wait --timeout 5m

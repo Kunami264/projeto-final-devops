@@ -128,23 +128,34 @@ def test_created_order_is_persisted_and_listed(mock_client_cls, write_headers, r
     assert any(o["id"] == created["id"] for o in listed)
 
 
-def test_azp_allowlist_rejects_client_not_in_list(read_headers, monkeypatch):
-    from app import security
+@patch("app.main.httpx.Client")
+def test_create_order_calls_users_with_service_token(mock_client_cls, write_headers):
+    import jwt
 
-    monkeypatch.setattr(security, "ALLOWED_CLIENTS", {"outro-client"})
+    import os
 
-    r = client.get("/orders/1", headers=read_headers)
-    assert r.status_code == 403
+    SECRET = os.environ["AUTH_JWT_SECRET"]
+
+    mock_response = MagicMock()
+    mock_response.raise_for_status.return_value = None
+    mock_response.json.return_value = {"id": 1, "name": "Daniel Silva", "email": "daniel.silva@example.com"}
+    mock_client = MagicMock()
+    mock_client.__enter__.return_value.get.return_value = mock_response
+    mock_client_cls.return_value = mock_client
+
+    r = client.post("/orders", json={"user_id": 1, "item": "Rato", "quantity": 1}, headers=write_headers)
+    assert r.status_code == 200
+
+    sent = mock_client.__enter__.return_value.get.call_args.kwargs["headers"]["Authorization"].split()[1]
+    claims = jwt.decode(sent, SECRET, algorithms=["HS256"], issuer="projeto-final")
+    assert claims["sub"] == "service-orders"
+    assert claims["scope"] == "users:read"
 
 
-def test_azp_allowlist_accepts_client_in_list(read_headers, monkeypatch):
-    from app import security
-
-    monkeypatch.setattr(security, "ALLOWED_CLIENTS", {"api-cli"})
-    r = client.get("/orders/999999", headers=read_headers)
-
-
-    assert r.status_code == 404
+def test_token_signed_with_another_secret_returns_401(make_token):
+    token = make_token("orders:read", secret="outro-segredo-qualquer-com-32-ou-mais-caracteres")
+    r = client.get("/orders", headers={"Authorization": f"Bearer {token}"})
+    assert r.status_code == 401
 
 
 @patch("app.main.httpx.Client")

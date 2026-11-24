@@ -28,8 +28,6 @@ spec:
               value: "http://{{ include "projeto-final.serviceFQDN" (dict "name" "service-users" "context" $) }}:8002"
             - name: ORDERS_URL
               value: "http://{{ include "projeto-final.serviceFQDN" (dict "name" "service-orders" "context" $) }}:8001"
-            - name: KEYCLOAK_URL
-              value: {{ .Values.web.keycloakUrl | quote }}
           livenessProbe:
             httpGet:
               path: /healthz

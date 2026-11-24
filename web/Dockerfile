@@ -6,8 +6,7 @@ USER 101
 
 ENV NGINX_ENTRYPOINT_LOCAL_RESOLVERS=1 \
     USERS_URL=http://service-users:8002 \
-    ORDERS_URL=http://service-orders:8001 \
-    KEYCLOAK_URL=http://keycloak:8080
+    ORDERS_URL=http://service-orders:8001
 
 COPY nginx.conf.template /etc/nginx/templates/default.conf.template
 COPY static/ /usr/share/nginx/html/

@@ -30,7 +30,7 @@ A plataforma destina-se a organizações que necessitam de registar os seus clie
 | Benefício | Como é assegurado |
 |---|---|
 | Entregas rápidas e controladas | Cada alteração é analisada, testada e publicada automaticamente pela ordem DEV → STG → PRD. A versão que chega a produção é exatamente a que foi validada em STG |
-| Disponibilidade e escalabilidade | Em produção, o site de gestão e as duas API executam com um mínimo de duas réplicas; as API escalam automaticamente em função da carga (até 6 e 8 réplicas) |
+| Disponibilidade e escalabilidade | Em produção, cada serviço arranca com uma réplica (cabe numa VM pequena) e as duas API escalam automaticamente em função da carga, até 3 réplicas |
 | Proteção dos dados | Em produção existe um único ponto de entrada, em HTTPS, e todas as operações exigem autenticação e a permissão adequada |
 | Deteção precoce de problemas | Análise de vulnerabilidades do código, das dependências e das imagens antes de cada entrega; métricas e alertas em tempo real em DEV e STG; rastreio de pedidos entre serviços em DEV |
 | Reprodutibilidade | Cada ambiente é criado com dois comandos e totalmente removido com um |
@@ -53,11 +53,11 @@ O HLD principal mostra o ambiente de **produção (PRD)** na perspetiva do clien
 
 1. O cliente abre `https://projeto-final.test` no browser e entra pela porta **443** (HTTPS), a única aberta na VM. A porta 80 apenas redireciona para a 443. O nome `projeto-final.test` tem de apontar para a VM: `make run-prd` indica a entrada a criar no `/etc/hosts`.
 2. O Ingress NGINX termina o HTTPS e entrega o pedido ao serviço certo: o site (`/`), a API de clientes (`/users`) ou a API de encomendas (`/orders`).
-3. No login, o Keycloak confirma o utilizador e a password e devolve um token de acesso.
+3. No login (`/auth/token`), a API de clientes confirma o utilizador e a password e devolve um token de acesso (JWT).
 4. Cada API valida o token antes de responder. A API de encomendas confirma o cliente na API de clientes.
 5. Os dados ficam no PostgreSQL, em volume persistente.
 
-As APIs, a base de dados e o Keycloak não têm porta aberta para fora, e as NetworkPolicies só permitem as ligações desenhadas. Cada ambiente tem o seu próprio HLD, todos no formato praticado nas aulas (M2-11): o servidor Ubuntu, a rede em tubo com a sub-rede, os contentores ou *pods* ligados à rede, as etiquetas de portas (VM : destino), a NAT e o painel *Network Info*. As portas de DEV estão a amarelo, as de STG a azul e as de PRD a vermelho, e os números 1 a 5 marcam nas peças os passos do percurso.
+As APIs e a base de dados não têm porta aberta para fora, e as NetworkPolicies só permitem as ligações desenhadas. Cada ambiente tem o seu próprio HLD, todos no formato praticado nas aulas (M2-11): o servidor Ubuntu, a rede em tubo com a sub-rede, os contentores ou *pods* ligados à rede, as etiquetas de portas (VM : destino), a NAT e o painel *Network Info*. As portas de DEV estão a amarelo, as de STG a azul e as de PRD a vermelho, e os números 1 a 5 marcam nas peças os passos do percurso.
 
 **DEV — Docker Compose** (acesso por `localhost`; rede `app-network` `172.30.10.0/24`, SonarQube na `sonar-network` `172.30.20.0/24`):
 
@@ -72,17 +72,16 @@ Tudo corre numa VM Ubuntu 24.04 (`10.211.55.4`). Os ficheiros `.drawio.png` são
 | Componente | Função |
 |---|---|
 | **web** | Site de gestão, servido por nginx |
-| **service-users** | API de clientes (FastAPI) |
+| **service-users** | API de clientes (FastAPI); faz também o login e emite os *tokens* JWT |
 | **service-orders** | API de encomendas (FastAPI); valida cada cliente junto do `service-users` |
 | **PostgreSQL** | Base de dados, com armazenamento persistente |
-| **Keycloak** | Autenticação e autorização (OIDC/JWT) |
 | **Prometheus** | Recolha de métricas (DEV e STG) |
 | **Grafana** | Painéis e alertas (DEV e STG) |
 | **Jaeger** | Rastreio distribuído (OpenTelemetry), apenas em DEV |
 | **SonarQube** | Análise de vulnerabilidades e qualidade do código Python (servidor local em Docker) |
 | **pip-audit** e **Trivy** | Análise de vulnerabilidades das dependências Python e das imagens Docker |
 
-No cluster, o Keycloak reside no *namespace* `auth` e é partilhado por STG e PRD. As ferramentas de monitorização residem no *namespace* `observability` e monitorizam apenas STG: PRD não tem observabilidade (nem métricas, nem rastreio).
+No cluster, as ferramentas de monitorização residem no *namespace* `observability` e monitorizam apenas STG: PRD não tem observabilidade (nem métricas, nem rastreio).
 
 ---
 
@@ -99,11 +98,13 @@ make check
 | Recurso | Mínimo | Observações |
 |---|---|---|
 | Memória | 8 GB | DEV e STG não correm em simultâneo: `make build-stg` começa por limpar DEV. Os testes (`make test-dev`) param primeiro o ambiente, porque não precisam dele |
-| CPU | 4 núcleos | Com 2 núcleos funciona, mas o primeiro arranque do Keycloak fica muito mais lento |
+| CPU | 4 núcleos | Com 2 núcleos funciona, mais devagar |
 | Disco livre | 30 GB | Imagens Docker, imagens do cluster e volumes |
 | Arquitetura | x86_64 ou arm64 | As imagens usadas existem para as duas arquiteturas. Funciona em VM (por exemplo VirtualBox ou Parallels com Ubuntu 24.04) ou em PC físico; não é preciso *nested virtualization*. `make check` mostra a arquitetura e o tipo de virtualização |
-| Relógio | Sincronizado (NTP) | Uma hora errada invalida os *tokens* do cluster e do Keycloak: `sudo timedatectl set-ntp true` |
+| Relógio | Sincronizado (NTP) | Uma hora errada invalida os *tokens* do cluster e da aplicação: `sudo timedatectl set-ntp true` |
 | Rede | Acesso à Internet | Descarregamento de imagens (Docker Hub, quay.io) e da base de dados de vulnerabilidades do Trivy |
+
+O projeto é desenvolvido em ARM. O *workflow* `.github/workflows/e2e-x86.yml` confirma que também corre em x86_64: numa máquina Ubuntu 24.04 x86_64 limpa, instala o MicroK8s, constrói as imagens, sobe STG e PRD com o `Makefile` e verifica que respondem (testes de integração e *smoke*, login, criar, editar e apagar por HTTPS).
 
 ### 3.2 Programas
 
@@ -128,7 +129,7 @@ O Trivy não precisa de ser instalado: corre num contentor (`aquasec/trivy`). O 
 | Acesso ao Docker sem `sudo` | Todos os comandos `make` usam `docker` diretamente | `sudo usermod -aG docker $USER` e iniciar nova sessão (ou `newgrp docker`) |
 | Acesso ao MicroK8s sem `sudo` | Os comandos `make` de *build* e *run* usam `microk8s` diretamente e nunca pedem a palavra-passe | `sudo usermod -aG microk8s $USER` e iniciar nova sessão (ou `newgrp microk8s`) |
 | `sudo` (só na preparação da máquina) | Instalar os programas, adicionar o utilizador aos grupos e escrever a entrada `projeto-final.test` no `/etc/hosts` | Utilizador no grupo `sudo`. Feito à mão, uma única vez; `make clean-prd` também o usa para remover a entrada do `/etc/hosts` |
-| Portas livres | Acesso aos serviços | DEV: 8000–8002, 8080, 9000, 3000, 9090, 16686, 4317 e 9500 (SonarQube). STG: 8100–8102, 8180 e 8190. Ferramentas do cluster: 3100, 9190 e 8280. PRD: 80 e 443 |
+| Portas livres | Acesso aos serviços | DEV: 8000–8002, 3000, 9090, 16686, 4317 e 9500 (SonarQube). STG: 8100–8102. Ferramentas do cluster: 3100 e 9190. PRD: 80 e 443 |
 
 `make check` confirma estas permissões antes do primeiro *build*.
 
@@ -191,7 +192,7 @@ STG é o ambiente onde tudo é construído, gerado e validado. Só o que é apro
 | Passo | Comando | Resultado |
 |---|---|---|
 | 1. Construção | `make build-stg` | Constrói as imagens com todas as dependências de produção instaladas, carrega-as no cluster, gera o certificado TLS de PRD e instala no `.venv` os módulos de teste. Não limpa nem para nada: se DEV estiver a correr, sugere `make stop-dev` ou `make clean-dev`, para os dois ambientes não disputarem a memória da máquina |
-| 2. Arranque | `make run-stg` | Instala o Keycloak, as ferramentas de monitorização de STG, o Ingress controller e a aplicação |
+| 2. Arranque | `make run-stg` | Prepara o cluster (DNS e armazenamento), instala as ferramentas de monitorização de STG, o Ingress controller e a aplicação |
 | 3. Validação | `make test-stg` | Executa os testes de integração e *smoke* contra o cluster e os testes de vulnerabilidades às dependências e às imagens que seguem para PRD (pip-audit e Trivy). Se forem aprovados, prepara PRD: promove as imagens (`stg` → `main`, sem novo *build*) e instala o certificado TLS no cluster. `make integration-stg` executa apenas os testes de integração e *smoke*, sem preparar PRD |
 | 4. Demonstração (opcional) | `make demo-stg` | Cria, edita e apaga um cliente e uma encomenda |
 
@@ -209,7 +210,7 @@ Em produção nada é construído nem gerado e não se executam testes: apenas s
 
 | Passo | Comando | Resultado |
 |---|---|---|
-| 1. Arranque | `make run-prd` | Confirma que STG preparou PRD (imagens, certificado e Keycloak) e sobe a aplicação com o ponto de entrada HTTPS. Se faltar algum pré-requisito, termina com erro e indica os passos de STG a executar |
+| 1. Arranque | `make run-prd` | Confirma que STG preparou PRD (imagens e certificado) e sobe a aplicação com o ponto de entrada HTTPS. Se faltar algum pré-requisito, termina com erro e indica os passos de STG a executar |
 | 2. Verificação | `make status-prd` | Apresenta as réplicas, os *health-checks*, o escalonamento automático e o Ingress |
 | 3. Publicação (opcional) | `make push-prd` | Publica no registo (GHCR) as imagens promovidas por STG |
 
@@ -233,16 +234,15 @@ Sempre que é solicitada autenticação: utilizador **`admin`**, palavra-passe *
 
 | | DEV | STG | PRD |
 |---|---|---|---|
-| **Condição prévia** | `make run-dev` | `make forward-stg` (site) e `make forward-infra` (ferramentas) | `make forward-infra` (apenas para a consola do Keycloak) |
+| **Condição prévia** | `make run-dev` | `make forward-stg` (site) e `make forward-infra` (ferramentas) | — |
 | **Site de gestão** | <http://localhost:8000> | <http://localhost:8100> | <https://projeto-final.test/> |
 | **Grafana** | <http://localhost:3000> | <http://localhost:3100> | — (sem observabilidade em PRD) |
 | **Prometheus** | <http://localhost:9090> | <http://localhost:9190> | — (sem observabilidade em PRD) |
 | **Jaeger** | <http://localhost:16686> | — (rastreio só em DEV) | — |
-| **Keycloak** (administração) | <http://localhost:8080> | <http://localhost:8280> | <http://localhost:8280> |
 | **SonarQube** | <http://localhost:9500> (`make sonar-up`) | — | — |
 
-- O site de gestão, o Grafana, o Keycloak e o SonarQube exigem autenticação. O SonarQube é iniciado por `make security` e parado no fim da análise, para libertar memória; para consultar o painel: `make sonar-up`. Usa o utilizador **`admin`** com a palavra-passe **`ProjetoFinal.2026`**, definida na primeira execução. O Prometheus e o Jaeger não dispõem de ecrã de autenticação.
-- No cluster, as ferramentas de monitorização (só STG) e a administração do Keycloak (partilhado por STG e PRD) não são expostas para o exterior; o acesso faz-se exclusivamente através de `make forward-infra`.
+- O site de gestão, as APIs, o Grafana e o SonarQube exigem autenticação. O SonarQube é iniciado por `make security` e parado no fim da análise, para libertar memória; para consultar o painel: `make sonar-up`. Usa o utilizador **`admin`** com a palavra-passe **`ProjetoFinal.2026`**, definida na primeira execução. O Prometheus e o Jaeger não dispõem de ecrã de autenticação.
+- No cluster, as ferramentas de monitorização (só STG) não são expostas para o exterior; o acesso faz-se exclusivamente através de `make forward-infra`.
 - As credenciais indicadas são de demonstração e devem ser alteradas antes de qualquer utilização com dados reais (secção 11).
 
 ---
@@ -287,16 +287,16 @@ Os clientes e as encomendas são guardados numa base de dados PostgreSQL com arm
 - Os comandos `make stop-dev`, `make stop-stg` e `make stop-prd` preservam os dados.
 - Apenas os comandos `make clean...` eliminam os dados; no arranque seguinte são repostos três clientes de exemplo.
 
-### 6.5 Contas de acesso
+### 6.5 Conta de acesso
 
-Os clientes registados no site são os clientes da organização. As contas das pessoas autorizadas a aceder ao site são geridas no Keycloak:
+Os clientes registados no site são os clientes da organização. O acesso ao site e às APIs faz-se com uma única conta, definida por configuração (por omissão **`admin`** / **`admin`**):
 
-1. Aceder à administração do Keycloak (secção 5) e autenticar-se.
-2. Selecionar o *realm* **projeto-final**.
-3. Em *Users*, selecionar *Add user*, indicar o *Username* e confirmar com *Create*.
-4. No separador *Credentials*, selecionar *Set password*, desativar *Temporary* e guardar.
+| Ambiente | Onde se altera |
+|---|---|
+| DEV | `docker-compose.yml`: `AUTH_ADMIN_USERNAME` e `AUTH_ADMIN_PASSWORD` do `service-users` |
+| STG / PRD | `helm/values-staging.yaml` / `helm/values-production.yaml`: `auth.adminUsername` e `auth.adminPassword` (no pipeline, *Secrets* do GitHub) |
 
-A palavra-passe de uma conta existente é alterada no mesmo local, em *Credentials* → *Reset password*.
+O login devolve um *token* JWT válido durante 30 minutos (`auth.tokenTtlSeconds`), assinado com `auth.jwtSecret`; quando expira, o site pede novo login.
 
 ---
 
@@ -325,8 +325,8 @@ sum(rate(http_requests_total[5m])) by (service)
 | `make stop-dev`, `make stop-stg`, `make stop-prd` | Para o ambiente, preservando os dados e as imagens |
 | `make clean-dev` | Limpeza Docker completa: `docker compose down -v --rmi all --remove-orphans`, paragem de todos os contentores, `docker system prune -af --volumes`, `volume prune`, `network prune` e `builder prune`; remove ainda o `.venv` e os ficheiros temporários e apresenta `docker system df`. **Elimina os dados** |
 | `make clean-stg` | Remove a aplicação e o *namespace* `staging`, todas as imagens do projeto (no cluster e no Docker) e o certificado gerado em STG. **Elimina os dados** |
-| `make clean-prd` | Remove a aplicação, o *namespace* `production`, o Ingress do Keycloak, o Secret TLS e a entrada `projeto-final.test` do `/etc/hosts`. **Elimina os dados** |
-| `make clean-infra` | Remove o Keycloak, a monitorização de STG, o Ingress controller, o RBAC de cluster do Prometheus e as imagens de terceiros carregadas no cluster |
+| `make clean-prd` | Remove a aplicação, o *namespace* `production` (com o Secret TLS) e a entrada `projeto-final.test` do `/etc/hosts`. **Elimina os dados** |
+| `make clean-infra` | Remove a monitorização de STG, o Ingress controller, o RBAC de cluster do Prometheus e as imagens de terceiros carregadas no cluster |
 | `make sonar-down` | Para o SonarQube, preservando as análises |
 | `make clean-sonar` | Remove o SonarQube: contentor, volumes (análises) e imagem |
 | `make clean` | Executa todas as limpezas anteriores e remove os ficheiros de acesso ao cluster (`kubeconfig-*.yaml`) e os *port-forwards* ativos |
@@ -346,17 +346,17 @@ Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na m
 | `kubernetes cluster unreachable` ao utilizar o `helm` diretamente | O Helm não tem indicação do cluster a utilizar | Executar `make kubeconfig` e acrescentar `--kubeconfig kubeconfig-make.yaml` ao comando. Os comandos `make` fazem-no automaticamente |
 | `UPGRADE FAILED: "projeto-final" has no deployed releases` | Uma instalação anterior foi interrompida | Os comandos `make run-stg` e `make run-prd` e o pipeline removem automaticamente a instalação incompleta |
 | `Credenciais do SonarQube recusadas` | A palavra-passe do SonarQube foi alterada manualmente no painel | `make security SONAR_PASSWORD=<palavra-passe atual>`, ou `make clean-sonar` para recriar o servidor |
-| `Connection refused` nos primeiros testes de `make test-stg` | A porta local do *port-forward* abria antes de o túnel até ao *pod* responder | Corrigido: antes do primeiro teste, `tests/conftest.py` espera (até 120 s) que web, APIs e Keycloak respondam por HTTP, e os endereços usam `127.0.0.1`. Se o tempo esgotar, a mensagem indica o serviço em falta: confirmar os *pods* com `kubectl get pods -n staging` |
+| `Connection refused` nos primeiros testes de `make test-stg` | A porta local do *port-forward* abria antes de o túnel até ao *pod* responder | Corrigido: antes do primeiro teste, `tests/conftest.py` espera (até 120 s) que o site e as APIs respondam por HTTP, e os endereços usam `127.0.0.1`. Se o tempo esgotar, a mensagem indica o serviço em falta: confirmar os *pods* com `kubectl get pods -n staging` |
 | `permission denied ... docker.sock` | O utilizador não pertence ao grupo `docker` | `sudo usermod -aG docker $USER` e iniciar nova sessão (secção 3.3) |
 | `ensurepip is not available` ao criar o `.venv` | Falta o módulo `venv` do Python | `sudo apt install python3-venv` |
 | A máquina fica sem memória | DEV, SonarQube e cluster ao mesmo tempo | `make test-dev` para o ambiente antes dos testes e para o SonarQube no fim; `make build-stg` limpa DEV antes de STG. Recomendam-se 8 GB |
+| `forbidden: unable to create new content in namespace ... because it is being terminated` | Uma limpeza anterior deixou o *namespace* a meio da remoção (por exemplo, sem rede no cluster, os *pods* e os volumes não terminam) | Resolvido automaticamente: antes de instalar, `make run-stg` e `make run-prd` esperam que o *namespace* desapareça e, se ficar preso, forçam a saída dos *pods* e dos volumes |
+| `[sudo] password for ...` durante `make run-stg` | Ao ativar um *addon* (DNS, armazenamento), o próprio MicroK8s pede a password de administrador | Só acontece na primeira vez: os *addons* já ativos são saltados |
 | `plugin type="calico" failed (add): ... connection is unauthorized: Unauthorized` e *pods* presos em `ContainerCreating` | O *token* que a rede do cluster (Calico) usa expirou: MicroK8s instalado há muito tempo, VM restaurada de um *snapshot* ou relógio desacertado | Resolvido automaticamente: `make run-stg` deteta o erro, reinicia o `calico-node` (que gera um *token* novo) e continua. À mão: `microk8s kubectl rollout restart daemonset/calico-node -n kube-system` |
 | `O cluster não está saudável: coredns (kube-system) não ficou pronto` | O DNS interno do cluster não arranca (rede dos *pods* ou falta de recursos); sem ele os serviços não se encontram pelo nome | O comando mostra o estado do nó, os *pods* de `kube-system` e os registos do Calico. Confirmar a hora da máquina (`timedatectl`); `microk8s inspect` gera o relatório completo |
 | `não acede ao MicroK8s sem sudo` | O utilizador não pertence ao grupo `microk8s` | `sudo usermod -aG microk8s $USER` e iniciar nova sessão (secção 3.3) |
-| `keycloak não ficou pronto` ao executar `make run-stg` | Máquina com pouca memória ou CPU (o primeiro arranque do Keycloak é pesado), falta de armazenamento no cluster ou primeiro descarregamento da imagem | O comando espera até 30 minutos e, se falhar, mostra o estado dos *pods*, os eventos e os registos do Keycloak. Confirmar que DEV está parado (`make stop-dev` ou `make clean-dev`) e repetir `make run-stg`: o comando retoma onde ficou |
-| `401 Unauthorized` na autenticação, após atualizar o projeto | O Keycloak mantém as contas e permissões da versão anterior | `make reset-keycloak` no cluster; em DEV, `make clean-dev` e novo arranque |
 
-O Keycloak apenas importa as contas e permissões iniciais (`k8s/auth/realm-export.json`) no primeiro arranque. O comando `make reset-keycloak` repõe essa configuração e elimina as contas criadas manualmente.
+
 
 ---
 
@@ -379,7 +379,7 @@ A imagem é construída uma única vez, em `build-stg`, com as dependências de 
 
 | Tipo | Ambiente | Localização | N.º |
 |---|---|---|---|
-| Unitários | DEV | `service-users/tests` | 23 |
+| Unitários | DEV | `service-users/tests` | 27 |
 | Unitários | DEV | `service-orders/tests` | 19 |
 | Integração | STG | `tests/integration` | 12 |
 | *Smoke* | STG | `tests/smoke` | 3 |
@@ -417,6 +417,7 @@ Todos os pedidos incluem um *token* no cabeçalho `Authorization: Bearer <token>
 
 | Operação | Pedido | Permissão | Resposta |
 |---|---|---|---|
+| Login | `POST /auth/token` `{username, password}` | — | 200 (`access_token`) / 401 |
 | Listar clientes | `GET /users` | `users:read` | 200 |
 | Consultar cliente | `GET /users/{id}` | `users:read` | 200 / 404 |
 | Criar cliente | `POST /users` `{name, email}` | `users:write` | 201 / 409 / 422 |
@@ -431,9 +432,8 @@ Todos os pedidos incluem um *token* no cabeçalho `Authorization: Bearer <token>
 Exemplo em DEV (em PRD, os três endereços são substituídos por `https://projeto-final.test`):
 
 ```bash
-TOKEN=$(curl -sk http://localhost:8080/realms/projeto-final/protocol/openid-connect/token \
-  -d grant_type=password -d client_id=api-cli -d client_secret=troque-este-segredo-api-cli \
-  -d username=admin -d password=admin \
+TOKEN=$(curl -sk -X POST http://localhost:8002/auth/token \
+  -H "Content-Type: application/json" -d '{"username": "admin", "password": "admin"}' \
   | python3 -c 'import sys,json; print(json.load(sys.stdin)["access_token"])')
 ```
 
@@ -460,13 +460,13 @@ As variáveis do `Makefile` podem ser definidas na linha de comandos, sem altera
 ### 10.6 Estrutura do repositório
 
 ```text
-├── .github/workflows/      pipeline.yml (CI/CD) · cleanup.yml (limpeza manual)
+├── .github/workflows/      pipeline.yml (CI/CD) · e2e-x86.yml (teste em x86_64) · cleanup.yml (limpeza manual)
 ├── web/                    site de gestão: static/ · nginx.conf.template · Dockerfile
 ├── service-users/          app/ · tests/ · Dockerfile · requirements-prd.txt · requirements-tracing.txt · requirements-dev.txt
 ├── service-orders/         app/ · tests/ · Dockerfile · requirements-prd.txt · requirements-tracing.txt · requirements-dev.txt
 ├── tests/                  integration/ · smoke/ · security/ (vulnerabilidades e RESULTADOS.md)
 ├── helm/                   chart único · values-staging.yaml · values-production.yaml
-├── k8s/                    auth/ (Keycloak) · observability/ · ingress/
+├── k8s/                    observability/ (Prometheus e Grafana de STG)
 ├── scripts/                demo.py · get_token.py
 ├── docs/                   passo-8.md · HLD de PRD (20261110-HLDProjetoFinal-DevOps.drawio.png), de DEV e de STG
 │   ├── Fotos/              capturas de ecrã de cada passo da execução
@@ -486,8 +486,8 @@ As variáveis do `Makefile` podem ser definidas na linha de comandos, sem altera
 
 A configuração entregue destina-se a demonstração e avaliação. Antes de uma utilização com dados reais, recomenda-se:
 
-- **Credenciais** — substituir as credenciais de demonstração (`admin` / `admin`) do site, do Keycloak e do Grafana, bem como os segredos de exemplo em `helm/values-*.yaml` e `k8s/auth/`. No pipeline, estes valores devem provir dos *Secrets* dos *Environments* do GitHub.
+- **Credenciais** — substituir as credenciais de demonstração (`admin` / `admin`) do site e do Grafana, bem como os segredos de exemplo em `helm/values-*.yaml` (`auth.jwtSecret`, `auth.adminPassword`). No pipeline, estes valores vêm dos *Secrets* `AUTH_JWT_SECRET_STG/PRD` e `AUTH_ADMIN_PASSWORD_STG/PRD` dos *Environments* do GitHub.
 - **Certificado** — substituir o certificado autoassinado por um emitido por uma autoridade de certificação; o *chart* suporta cert-manager (`ingress.tls.certManager` em `helm/values-production.yaml`).
-- **Keycloak** — o Keycloak é executado em modo de desenvolvimento, com base de dados interna; em produção deve utilizar o modo de produção e uma base de dados dedicada.
-- **Perfis de acesso** — todas as contas criadas têm permissão de leitura e escrita; a diferenciação de perfis requer configuração adicional no Keycloak.
+- **Contas e perfis** — a plataforma tem uma única conta (definida por configuração), com permissão de leitura e escrita. Para várias pessoas com perfis diferentes, as contas passariam para a base de dados (com a password guardada em *hash*) ou para um servidor de identidade dedicado (por exemplo o Keycloak), à custa de mais recursos.
+- **Login** — acrescentar limitação de tentativas no `/auth/token` (por exemplo no Ingress) contra ataques de força bruta.
 - **Infraestrutura** — o cluster utilizado tem um único nó; a alta disponibilidade efetiva exige vários nós e cópias de segurança da base de dados.
