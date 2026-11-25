@@ -329,7 +329,7 @@ sum(rate(http_requests_total[5m])) by (service)
 | `make clean-infra` | Remove a monitorização de STG, o Ingress controller, o RBAC de cluster do Prometheus e as imagens de terceiros carregadas no cluster |
 | `make sonar-down` | Para o SonarQube, preservando as análises |
 | `make clean-sonar` | Remove o SonarQube: contentor, volumes (análises) e imagem |
-| `make clean` | Executa todas as limpezas anteriores e remove os ficheiros de acesso ao cluster (`kubeconfig-*.yaml`) e os *port-forwards* ativos |
+| `make clean` | Executa todas as limpezas anteriores, apaga os recursos que restem em todos os *namespaces* (`kubectl delete all --all --all-namespaces`, exceto `kube-system`, onde estão a rede, o DNS e o armazenamento do cluster) e as imagens do cluster sem uso (`microk8s ctr images prune --all`), e remove os ficheiros de acesso ao cluster (`kubeconfig-*.yaml`) e os *port-forwards* ativos |
 
 Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na máquina; permanece apenas o MicroK8s instalado. **Atenção:** `make clean-dev` (incluído em `make clean`) para e remove todos os contentores, imagens e volumes Docker da máquina, e não apenas os deste projeto. Em cluster kind, o nó do cluster é preservado. A remoção da entrada do `/etc/hosts` pede a palavra-passe de administrador.
 

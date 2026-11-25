@@ -31,6 +31,9 @@ cluster_images   = $(DOCKER) exec $(KIND_CLUSTER)-control-plane ctr -n k8s.io im
 docker_containers = $(DOCKER) ps -a --format '{{.ID}} {{.Names}}' | grep -v ' $(KIND_CLUSTER)-control-plane$$' | cut -d' ' -f1
 load_image       = kind load docker-image $(1) --name $(KIND_CLUSTER)
 unload_image     = $(DOCKER) exec $(KIND_CLUSTER)-control-plane ctr -n k8s.io images rm $(1)
+prune_images     = $(DOCKER) exec $(KIND_CLUSTER)-control-plane ctr -n k8s.io images prune --all
+# Namespaces do próprio cluster, que o make clean não apaga (no kind o armazenamento está em local-path-storage)
+SYSTEM_NS        := kube-system local-path-storage
 enable_ingress   = $(HELM) upgrade --install ingress-nginx ingress-nginx --repo https://kubernetes.github.io/ingress-nginx -n $(INGRESS_NS) --create-namespace --set controller.service.type=NodePort --wait --timeout 5m
 disable_ingress  = $(HELM) uninstall ingress-nginx -n $(INGRESS_NS) --wait; $(KUBECTL) delete namespace $(INGRESS_NS) --ignore-not-found
 # O kind já traz DNS e armazenamento por omissão
@@ -59,6 +62,8 @@ cluster_images   = $(MICROK8S) ctr image ls -q
 docker_containers = $(DOCKER) ps -qa
 load_image       = $(DOCKER) save $(1) | $(MICROK8S) ctr image import -
 unload_image     = $(MICROK8S) ctr image rm $(1)
+prune_images     = $(MICROK8S) ctr images prune --all
+SYSTEM_NS        := kube-system
 enable_ingress   = $(MICROK8S) enable ingress
 disable_ingress  = $(MICROK8S) disable ingress
 kube_system_diag = echo "✗ O cluster não está saudável: $$d (kube-system) não ficou pronto. Diagnóstico:"; \
@@ -800,13 +805,23 @@ zip: ## Gera ProjetoFinal.zip para entrega (só ficheiros do Git; pasta ProjetoF
 	@echo "===== ProjetoFinal.zip criado ✅  ($$(du -h ProjetoFinal.zip | cut -f1)) — primeiro nível: ProjetoFinal/ ====="
 
 clean: clean-prd clean-stg clean-infra clean-dev clean-sonar ## Limpa TUDO: PRD, STG, infraestrutura do cluster, DEV e SonarQube
+	@echo "===== [CLEAN K8S] Recursos restantes em todos os namespaces (exceto kube-system) ====="
+	@# kube-system fica de fora: tem a rede (Calico), o DNS e o armazenamento do cluster, que o MicroK8s não volta a criar
+	@# Equivale a kubectl delete all --all --all-namespaces, namespace a namespace (o kubectl não junta --all a um seletor)
+	-@for ns in $$($(KUBECTL) get namespaces -o jsonpath='{.items[*].metadata.name}'); do \
+		case " $(SYSTEM_NS) " in *" $$ns "*) continue ;; esac; \
+		echo "  $(KUBECTL) delete all --all -n $$ns"; $(KUBECTL) delete all --all -n $$ns; \
+	done
+	@echo "===== [CLEAN K8S] Imagens do cluster que já não estão em uso ====="
+	-$(prune_images)
 	@rm -f $(KUBECONFIG_FILE).tmp $(KUBECONFIG_FILE).err kubeconfig-*.yaml
 	@$(call kill_ports,$(OBS_PORTS))
 	@echo ""
 	@echo "===== [CLEAN] Tudo removido ✅ ====="
 	@echo "  Cluster: releases Helm, namespaces $(NAMESPACE_PRD)/$(NAMESPACE_STG)/$(NAMESPACE_OBS),"
 	@echo "           PVCs, Secrets, Ingress e Ingress controller, ClusterRole/Binding,"
-	@echo "           imagens do projeto e imagens de terceiros carregadas no cluster."
+	@echo "           imagens do projeto e de terceiros, restantes recursos de todos os namespaces"
+	@echo "           (kubectl delete all --all --all-namespaces, exceto kube-system) e imagens sem uso (ctr images prune --all)."
 	@echo "  Docker:  todos os contentores parados; imagens, volumes, redes e cache de build removidos"
 	@echo "           (docker system prune -af --volumes, volume/network/builder prune)."
 	@echo "  Local:   $(VENV_DIR), $(CERT_DIR), ficheiros kubeconfig-*.yaml, caches, *.db, port-forwards e a entrada no /etc/hosts."
