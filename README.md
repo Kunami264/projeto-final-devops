@@ -398,7 +398,7 @@ As imagens são construídas com as dependências de produção, em `build-stg` 
 | Unitários | DEV | `service-orders/tests` | 19 |
 | Integração | STG | `tests/integration` | 12 |
 | *Smoke* | STG | `tests/smoke` | 3 |
-| Vulnerabilidades (pip-audit e Trivy) | DEV, STG e pipeline | `tests/security` | 8 |
+| Vulnerabilidades (pip-audit e Trivy) | `make security` (só Docker) e pipeline | `tests/security` | 8 |
 | **Total** | | | **65** |
 
 Os testes de vulnerabilidades não precisam do ambiente a correr: analisam o código, as dependências e as imagens. Nenhuma vulnerabilidade é ignorada (o projeto não tem `.trivyignore`), e qualquer vulnerabilidade HIGH ou CRITICAL faz falhar o comando.

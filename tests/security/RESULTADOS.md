@@ -4,12 +4,12 @@ Testes de segurança do código e das dependências (M8). Não precisam do ambie
 
 | Ferramenta | O que analisa | Onde corre | Comando |
 |---|---|---|---|
-| **pip-audit** 2.10.1 | Dependências Python de cada serviço (`requirements-prd.txt` e `requirements-tracing.txt`) | DEV, STG e pipeline | `make security-deps` |
-| **Trivy** 0.76.1 (fs) | Os mesmos ficheiros de dependências, com a base de dados do Trivy | DEV, STG e pipeline | `make security-deps` |
-| **Trivy** 0.76.1 (imagem) | As imagens que seguem para PRD (sistema operativo e pacotes Python) | STG e pipeline | `make security-images` |
+| **pip-audit** 2.10.1 | Dependências Python de cada serviço (`requirements-prd.txt` e `requirements-tracing.txt`) | `make security` e pipeline | `make security-deps` |
+| **Trivy** 0.76.1 (fs) | Os mesmos ficheiros de dependências, com a base de dados do Trivy | `make security` e pipeline | `make security-deps` |
+| **Trivy** 0.76.1 (imagem) | As imagens construídas, `stg` e `main` (sistema operativo e pacotes Python) | `make security` e pipeline | `make security-images` |
 | **SonarQube** Community 26.9 | Código Python: vulnerabilidades, *security hotspots* e qualidade | DEV e pipeline | `make sonar` |
 
-`make security` reúne o pip-audit, o Trivy às dependências e o SonarQube, e está incluído em `make test-dev`. `make test-stg` corre o pip-audit e o Trivy às dependências e às imagens. Os testes estão em [`test_vulnerabilidades.py`](test_vulnerabilidades.py). Cada execução grava os relatórios detalhados em `tests/security/reports/`, e o pipeline guarda-os como artefacto (`relatorios-seguranca`).
+`make security` reúne o pip-audit, o Trivy às dependências e às imagens e o SonarQube, e está incluído em `make test-dev`. Só precisa do Docker: não é preciso nenhum ambiente nem o cluster a correr. Os testes estão em [`test_vulnerabilidades.py`](test_vulnerabilidades.py). Cada execução grava os relatórios detalhados em `tests/security/reports/`, e o pipeline guarda-os como artefacto (`relatorios-seguranca`).
 
 **Política:** nenhuma vulnerabilidade é ignorada. O `.trivyignore` foi eliminado, e qualquer vulnerabilidade HIGH ou CRITICAL (com ou sem correção disponível) faz falhar os testes.
 
