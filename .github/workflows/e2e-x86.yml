@@ -61,6 +61,16 @@ jobs:
           echo "127.0.0.1 projeto-final.test" | sudo tee -a /etc/hosts
           python3 scripts/demo.py --base-url https://projeto-final.test --insecure
 
+      - name: make clean (apaga tudo, incluindo a rede Calico) e PRD volta a subir
+        run: |
+          make clean MICROK8S="$MICROK8S"
+          echo "--- depois do make clean ---" | tee -a "$GITHUB_STEP_SUMMARY"
+          sudo microk8s kubectl get all -A 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          make build-prd MICROK8S="$MICROK8S"
+          make run-prd MICROK8S="$MICROK8S"
+          echo "127.0.0.1 projeto-final.test" | sudo tee -a /etc/hosts
+          python3 scripts/demo.py --base-url https://projeto-final.test --insecure
+
       - name: Diagnóstico (só em caso de falha)
         if: failure()
         run: |

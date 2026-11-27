@@ -14,7 +14,7 @@ A solução é composta por três serviços aplicacionais executados em contento
 
 ![Arquitetura de alto nível (HLD) — PRD](20261110-HLDProjetoFinal-DevOps.drawio.png)
 
-*Figura 1 — Arquitetura de alto nível do ambiente de produção (versão 6.0).*
+*Figura 1 — Arquitetura de alto nível do ambiente de produção.*
 
 O HLD principal mostra o ambiente de **produção (PRD)** na perspetiva do cliente, em cinco passos numerados:
 
@@ -83,7 +83,7 @@ A implementação decorreu de forma incremental. Cada fase foi validada antes do
 | Persistência dos dados | A base de dados utiliza um volume persistente, que se mantém após o reinício dos serviços e a paragem do ambiente. Apenas os comandos de limpeza o eliminam. |
 | *Chart* Helm único | O mesmo *chart* serve STG e PRD; as diferenças (réplicas, HTTPS, rastreio, recursos) residem nos ficheiros de valores. |
 | Makefile como ponto de entrada | Os mesmos comandos em todos os ambientes (`build`, `run`, `test`, `clean`). O Makefile deteta o cluster e a variante do Docker Compose disponíveis e arranca o MicroK8s quando este se encontra parado. |
-| Limpeza integral | `make clean` remove os recursos do projeto no cluster (aplicação, monitorização, Ingress controller e imagens), apaga os recursos que restem em todos os *namespaces* exceto `kube-system` (`kubectl delete all --all`), as imagens sem uso (`ctr images prune --all`) e desativa os *addons* que o projeto ativou (DNS, armazenamento, métricas, Ingress). No `kube-system` fica só a rede do cluster (Calico), que faz parte do MicroK8s e sem a qual o cluster deixa de funcionar. Aplica ainda a limpeza Docker completa adotada nas aulas (`compose down -v --rmi all`, `system prune -af --volumes`, `volume`, `network` e `builder prune`), bem como o ambiente virtual, os certificados, os ficheiros de acesso ao cluster e a entrada no `/etc/hosts`. |
+| Limpeza integral | `make clean` remove os recursos do projeto no cluster (aplicação, monitorização, Ingress controller e imagens), desativa os *addons* que o projeto ativou (DNS, armazenamento, métricas, Ingress) e apaga tudo o que resta em todos os *namespaces*, incluindo a rede do cluster (`kubectl delete all --all --all-namespaces`), e as imagens sem uso (`ctr images prune --all`). Como o MicroK8s não volta a criar a rede (Calico) sozinho, o `run-stg` ou `run-prd` seguinte repõe-na automaticamente. Aplica ainda a limpeza Docker completa adotada nas aulas (`compose down -v --rmi all`, `system prune -af --volumes`, `volume`, `network` e `builder prune`), bem como o ambiente virtual, os certificados, os ficheiros de acesso ao cluster e a entrada no `/etc/hosts`. |
 | Site de gestão sem *framework* | HTML, CSS e JavaScript servidos por nginx. É suficiente para as operações necessárias e não introduz etapas de construção nem dependências adicionais. |
 
 ## 5. Ferramentas utilizadas

@@ -33,7 +33,13 @@ load_image       = kind load docker-image $(1) --name $(KIND_CLUSTER)
 unload_image     = $(DOCKER) exec $(KIND_CLUSTER)-control-plane ctr -n k8s.io images rm $(1)
 prune_images     = $(DOCKER) exec $(KIND_CLUSTER)-control-plane ctr -n k8s.io images prune --all
 # Namespaces do próprio cluster, que o make clean não apaga (no kind o armazenamento está em local-path-storage)
+# kind (só para testes locais): a rede do kind (kindnet) não se repõe sozinha, por isso o delete all
+# salta os namespaces do próprio cluster
 SYSTEM_NS        := kube-system local-path-storage
+delete_all       = for ns in $$($(KUBECTL) get namespaces -o jsonpath='{.items[*].metadata.name}'); do \
+                     case " $(SYSTEM_NS) " in *" $$ns "*) continue ;; esac; \
+                     echo "  $(KUBECTL) delete all --all -n $$ns"; $(KUBECTL) delete all --all -n $$ns; \
+                   done
 enable_ingress   = $(HELM) upgrade --install ingress-nginx ingress-nginx --repo https://kubernetes.github.io/ingress-nginx -n $(INGRESS_NS) --create-namespace --set controller.service.type=NodePort --wait --timeout 5m
 disable_ingress  = $(HELM) uninstall ingress-nginx -n $(INGRESS_NS) --wait; $(KUBECTL) delete namespace $(INGRESS_NS) --ignore-not-found
 # O kind já traz DNS e armazenamento por omissão
@@ -64,7 +70,13 @@ docker_containers = $(DOCKER) ps -qa
 load_image       = $(DOCKER) save $(1) | $(MICROK8S) ctr image import -
 unload_image     = $(MICROK8S) ctr image rm $(1)
 prune_images     = $(MICROK8S) ctr images prune --all
-SYSTEM_NS        := kube-system
+# Apaga tudo, incluindo o kube-system (rede Calico); o run-stg/run-prd seguinte repõe o Calico (calico_restore)
+delete_all       = $(KUBECTL) delete all --all --all-namespaces
+CALICO_MANIFEST  ?= /var/snap/microk8s/current/args/cni-network/cni.yaml
+calico_restore   = echo "! A rede do cluster (Calico) foi apagada (make clean): a repô-la a partir do MicroK8s"; \
+                   $(KUBECTL) apply -f $(CALICO_MANIFEST) >/dev/null || { \
+                     echo "✗ Não foi possível ler $(CALICO_MANIFEST). Repor à mão: sudo microk8s kubectl apply -f $(CALICO_MANIFEST)"; exit 1; }; \
+                   $(KUBECTL) rollout status daemonset/calico-node -n kube-system --timeout=300s
 enable_ingress   = $(MICROK8S) status -a ingress 2>/dev/null | grep -qx enabled && echo "  ✓ addon ingress já ativo" || $(MICROK8S) enable ingress
 disable_ingress  = $(MICROK8S) disable ingress
 # Desativa os addons que o projeto ativou; no kube-system fica só a rede do cluster (Calico), que faz parte do MicroK8s
@@ -86,7 +98,8 @@ wait_kube_system = SECONDS=0; reparado=0; \
                      [ $$SECONDS -lt 600 ] || { $(kube_system_diag); exit 1; }; \
                      echo "  a aguardar $$d ($$SECONDS s)"; \
                    done; echo "  ✓ $$d pronto"
-enable_addons    = if $(KUBECTL) get daemonset/calico-node -n kube-system >/dev/null 2>&1; then \
+enable_addons    = $(KUBECTL) get daemonset/calico-node -n kube-system >/dev/null 2>&1 || { $(calico_restore); }; \
+                   if $(KUBECTL) get daemonset/calico-node -n kube-system >/dev/null 2>&1; then \
                      $(KUBECTL) rollout status daemonset/calico-node -n kube-system --timeout=300s >/dev/null 2>&1 || { $(calico_repair); }; \
                      if $(calico_broken); then $(calico_repair); fi; \
                    fi; \
@@ -833,13 +846,8 @@ zip: ## Gera ProjetoFinal.zip para entrega (só ficheiros do Git; pasta ProjetoF
 	@echo "===== ProjetoFinal.zip criado ✅  ($$(du -h ProjetoFinal.zip | cut -f1)) — primeiro nível: ProjetoFinal/ ====="
 
 clean: clean-prd clean-stg clean-infra clean-dev clean-sonar ## Limpa TUDO: PRD, STG, infraestrutura do cluster, DEV e SonarQube
-	@echo "===== [CLEAN K8S] Recursos restantes em todos os namespaces (exceto kube-system) ====="
-	@# kube-system fica de fora: tem a rede (Calico), o DNS e o armazenamento do cluster, que o MicroK8s não volta a criar
-	@# Equivale a kubectl delete all --all --all-namespaces, namespace a namespace (o kubectl não junta --all a um seletor)
-	-@for ns in $$($(KUBECTL) get namespaces -o jsonpath='{.items[*].metadata.name}'); do \
-		case " $(SYSTEM_NS) " in *" $$ns "*) continue ;; esac; \
-		echo "  $(KUBECTL) delete all --all -n $$ns"; $(KUBECTL) delete all --all -n $$ns; \
-	done
+	@echo "===== [CLEAN K8S] Tudo o que resta em todos os namespaces (kubectl delete all --all --all-namespaces) ====="
+	-$(delete_all)
 	@echo "===== [CLEAN K8S] Imagens do cluster que já não estão em uso ====="
 	-$(prune_images)
 	@rm -f $(KUBECONFIG_FILE).tmp $(KUBECONFIG_FILE).err kubeconfig-*.yaml
@@ -849,9 +857,9 @@ clean: clean-prd clean-stg clean-infra clean-dev clean-sonar ## Limpa TUDO: PRD,
 	@echo "  Cluster: releases Helm, namespaces $(NAMESPACE_PRD)/$(NAMESPACE_STG)/$(NAMESPACE_OBS),"
 	@echo "           PVCs, Secrets, Ingress e Ingress controller, ClusterRole/Binding,"
 	@echo "           imagens do projeto e de terceiros, restantes recursos de todos os namespaces"
-	@echo "           (kubectl delete all --all --all-namespaces, exceto kube-system), imagens sem uso (ctr images prune --all)"
-	@echo "           e addons ativados pelo projeto (dns, hostpath-storage, metrics-server, ingress)."
-	@echo "           No kube-system fica só a rede do cluster (Calico), que faz parte do próprio MicroK8s."
+	@echo "           (kubectl delete all --all --all-namespaces, incluindo a rede Calico do kube-system),"
+	@echo "           imagens sem uso (ctr images prune --all) e addons ativados (dns, hostpath-storage, metrics-server, ingress)."
+	@echo "           O make run-stg / run-prd seguinte repõe a rede do cluster (Calico) automaticamente."
 	@echo "  Docker:  todos os contentores parados; imagens, volumes, redes e cache de build removidos"
 	@echo "           (docker system prune -af --volumes, volume/network/builder prune)."
 	@echo "  Local:   $(VENV_DIR), $(CERT_DIR), ficheiros kubeconfig-*.yaml, caches, *.db, port-forwards e a entrada no /etc/hosts."
