@@ -73,6 +73,7 @@ prune_images     = $(MICROK8S) ctr images prune --all
 # Apaga tudo, incluindo o kube-system (rede Calico); o run-stg/run-prd seguinte repõe o Calico (calico_restore)
 delete_all       = $(KUBECTL) delete all --all --all-namespaces
 CALICO_MANIFEST  ?= /var/snap/microk8s/current/args/cni-network/cni.yaml
+KUBELET_ARGS     ?= /var/snap/microk8s/current/args/kubelet
 calico_restore   = echo "! A rede do cluster (Calico) foi apagada (make clean): a repô-la a partir do MicroK8s"; \
                    $(KUBECTL) apply -f $(CALICO_MANIFEST) >/dev/null || { \
                      echo "✗ Não foi possível ler $(CALICO_MANIFEST). Repor à mão: sudo microk8s kubectl apply -f $(CALICO_MANIFEST)"; exit 1; }; \
@@ -80,7 +81,7 @@ calico_restore   = echo "! A rede do cluster (Calico) foi apagada (make clean): 
 enable_ingress   = $(MICROK8S) status -a ingress 2>/dev/null | grep -qx enabled && echo "  ✓ addon ingress já ativo" || $(MICROK8S) enable ingress
 disable_ingress  = $(MICROK8S) disable ingress
 # Desativa os addons que o projeto ativou; no kube-system fica só a rede do cluster (Calico), que faz parte do MicroK8s
-disable_addons   = for a in metrics-server hostpath-storage:destroy-storage dns; do $(MICROK8S) disable $$a </dev/null; done
+disable_addons   = $(sudo_rs_check); for a in metrics-server hostpath-storage:destroy-storage dns; do $(MICROK8S) disable $$a </dev/null; done
 kube_system_diag = echo "✗ O cluster não está saudável: $$d (kube-system) não ficou pronto. Diagnóstico:"; \
                    $(KUBECTL) get nodes -o wide || true; \
                    $(KUBECTL) get pods -n kube-system -o wide || true; \
@@ -98,15 +99,24 @@ wait_kube_system = SECONDS=0; reparado=0; \
                      [ $$SECONDS -lt 600 ] || { $(kube_system_diag); exit 1; }; \
                      echo "  a aguardar $$d ($$SECONDS s)"; \
                    done; echo "  ✓ $$d pronto"
-enable_addons    = $(KUBECTL) get daemonset/calico-node -n kube-system >/dev/null 2>&1 || { $(calico_restore); }; \
+# O sudo-rs (por omissão no Ubuntu 26.04) ignora o "sudo -E" de que o microk8s enable/disable depende:
+# os addons ficam configurados a meio (ex.: kubelet sem --cluster-domain, os pods não resolvem os serviços)
+sudo_rs_check    = if sudo --version 2>/dev/null | grep -qi sudo-rs; then \
+                     echo "✗ O sudo desta máquina é o sudo-rs, que ignora o 'sudo -E' usado pelo microk8s enable/disable."; \
+                     echo "  Usar o sudo clássico (uma única vez): sudo update-alternatives --set sudo /usr/bin/sudo.ws"; exit 1; fi
+enable_addons    = $(sudo_rs_check); \
+                   $(KUBECTL) get daemonset/calico-node -n kube-system >/dev/null 2>&1 || { $(calico_restore); }; \
                    if $(KUBECTL) get daemonset/calico-node -n kube-system >/dev/null 2>&1; then \
                      $(KUBECTL) rollout status daemonset/calico-node -n kube-system --timeout=300s >/dev/null 2>&1 || { $(calico_repair); }; \
                      if $(calico_broken); then $(calico_repair); fi; \
                    fi; \
                    for a in dns hostpath-storage metrics-server; do \
-                     if $(MICROK8S) status -a $$a 2>/dev/null | grep -qx enabled; then echo "  ✓ addon $$a já ativo"; \
+                     if [ $$a = dns ] && ! grep -q -- '^--cluster-domain=' $(KUBELET_ARGS) 2>/dev/null; then \
+                       echo "  ! addon dns incompleto (o kubelet não tem --cluster-domain: um enable anterior foi interrompido): a reativar"; \
+                       $(MICROK8S) disable dns </dev/null; $(MICROK8S) enable dns; \
+                     elif $(MICROK8S) status -a $$a 2>/dev/null | grep -qx enabled; then echo "  ✓ addon $$a já ativo"; \
                      else echo "  a ativar o addon $$a (o MicroK8s pode pedir a password de sudo)"; \
-                       $(MICROK8S) enable $$a || { echo "  ! enable $$a falhou (o API server pode estar a reiniciar): nova tentativa em 15 s"; sleep 15; $(MICROK8S) enable $$a; }; fi; \
+                       $(MICROK8S) enable $$a; fi; \
                    done; \
                    for d in coredns hostpath-provisioner; do $(wait_kube_system); done
 sudo_refresh     = case "$(KUBECTL)" in sudo*) sudo -v ;; esac
@@ -297,6 +307,8 @@ check: ## Verifica pré-requisitos e permissões da máquina (correr antes do pr
 	need helm "sudo snap install helm --classic"; \
 	if [ "$(CLUSTER)" = microk8s ]; then \
 		need fuser "sudo apt install psmisc"; \
+		if sudo --version 2>/dev/null | grep -qi sudo-rs; then echo "  ✗ sudo-rs (Ubuntu 26.04) não é compatível com o microk8s enable/disable — sudo update-alternatives --set sudo /usr/bin/sudo.ws"; ok=0; \
+		else echo "  ✓ sudo compatível com o MicroK8s"; fi; \
 		if snap list microk8s >/dev/null 2>&1; then echo "  ✓ MicroK8s instalado"; \
 		else echo "  ✗ MicroK8s em falta — sudo snap install microk8s --classic"; ok=0; fi; \
 		if $(MICROK8S) status >/dev/null 2>&1; then echo "  ✓ MicroK8s acessível sem sudo"; \

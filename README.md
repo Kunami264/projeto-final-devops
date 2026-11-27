@@ -145,6 +145,12 @@ sudo usermod -aG microk8s $USER
 
 Iniciar nova sessão (ou `newgrp microk8s`) para o grupo ficar ativo.
 
+**Ubuntu 26.04:** o `sudo` por omissão é o *sudo-rs*, que ignora o `sudo -E` de que o `microk8s enable`/`disable` depende. Os *addons* ficam configurados a meio (por exemplo, o DNS fica sem `--cluster-domain` e os *pods* não resolvem os nomes dos serviços). Usar o `sudo` clássico, uma única vez (`make check` avisa):
+
+```bash
+sudo update-alternatives --set sudo /usr/bin/sudo.ws
+```
+
 Os *addons* `dns`, `hostpath-storage` e `metrics-server` são ativados automaticamente por `make run-stg` e `make run-prd`, caso ainda não o estejam, e o `ingress` por `make run-prd`. `make clean` volta a desativá-los.
 
 Em sistemas sem MicroK8s (macOS ou Windows), a solução executa igualmente num cluster [kind](https://kind.sigs.k8s.io/), criado com `kind create cluster --name dev`. O `Makefile` deteta automaticamente o cluster disponível e os comandos são os mesmos; a única diferença reside no acesso a PRD (secção 4.3).
@@ -362,6 +368,7 @@ Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na m
 | `UPGRADE FAILED: "projeto-final" has no deployed releases` | Uma instalação anterior foi interrompida | Os comandos `make run-stg` e `make run-prd` e o pipeline removem automaticamente a instalação incompleta |
 | `Credenciais do SonarQube recusadas` | A palavra-passe do SonarQube foi alterada manualmente no painel | `make security SONAR_PASSWORD=<palavra-passe atual>`, ou `make clean-sonar` para recriar o servidor |
 | `Connection refused` nos primeiros testes de `make test-stg` | A porta local do *port-forward* abria antes de o túnel até ao *pod* responder | Corrigido: antes do primeiro teste, `tests/conftest.py` espera (até 120 s) que o site e as APIs respondam por HTTP, e os endereços usam `127.0.0.1`. Se o tempo esgotar, a mensagem indica o serviço em falta: confirmar os *pods* com `kubectl get pods -n staging` |
+| `nc: bad address 'postgres-orders'` nos *pods* (o Helm esgota o tempo com `Available: 0/1`), ou `No callback tokens file` num `microk8s enable` | O `sudo` é o *sudo-rs* (Ubuntu 26.04) e o `microk8s enable dns` ficou a meio: o kubelet não tem `--cluster-domain` | `sudo update-alternatives --set sudo /usr/bin/sudo.ws` (secção 3.4). Depois, `make cluster-addons` deteta o DNS incompleto e volta a ativá-lo; recriar os *pods*: `microk8s kubectl delete pods --all -n staging` |
 | `permission denied ... docker.sock` | O utilizador não pertence ao grupo `docker` | `sudo usermod -aG docker $USER` e iniciar nova sessão (secção 3.3) |
 | `ensurepip is not available` ao criar o `.venv` | Falta o módulo `venv` do Python | `sudo apt install python3-venv` |
 | A máquina fica sem memória | Vários ambientes ao mesmo tempo (DEV, STG, monitorização, SonarQube) | Nenhum ambiente precisa de outro em cima: `make stop-dev` antes de STG, `make stop-stg stop-infra` antes de PRD; `make test-dev` para DEV antes dos testes e para o SonarQube no fim. Recomendam-se 8 GB |
