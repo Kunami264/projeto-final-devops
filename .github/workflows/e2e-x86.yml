@@ -49,10 +49,12 @@ jobs:
       - name: Testes de integração e smoke contra STG
         run: make integration-stg MICROK8S="$MICROK8S"
 
-      - name: Subir PRD
+      - name: Subir PRD sozinho (sem STG nem observabilidade)
         run: |
           make prepare-prd MICROK8S="$MICROK8S"
+          make stop-stg stop-infra MICROK8S="$MICROK8S"
           make run-prd MICROK8S="$MICROK8S"
+          sudo microk8s kubectl get pods -A | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: PRD por HTTPS (login, criar, editar e apagar)
         run: |

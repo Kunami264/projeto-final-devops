@@ -38,6 +38,7 @@ enable_ingress   = $(HELM) upgrade --install ingress-nginx ingress-nginx --repo 
 disable_ingress  = $(HELM) uninstall ingress-nginx -n $(INGRESS_NS) --wait; $(KUBECTL) delete namespace $(INGRESS_NS) --ignore-not-found
 # O kind já traz DNS e armazenamento por omissão
 enable_addons    = true
+disable_addons   = true
 sudo_refresh     = true
 kill_ports       = { for p in $(1); do lsof -ti tcp:$$p | xargs kill; done; } >/dev/null 2>&1 || true
 else
@@ -64,8 +65,10 @@ load_image       = $(DOCKER) save $(1) | $(MICROK8S) ctr image import -
 unload_image     = $(MICROK8S) ctr image rm $(1)
 prune_images     = $(MICROK8S) ctr images prune --all
 SYSTEM_NS        := kube-system
-enable_ingress   = $(MICROK8S) enable ingress
+enable_ingress   = $(MICROK8S) status -a ingress 2>/dev/null | grep -qx enabled && echo "  ✓ addon ingress já ativo" || $(MICROK8S) enable ingress
 disable_ingress  = $(MICROK8S) disable ingress
+# Desativa os addons que o projeto ativou; no kube-system fica só a rede do cluster (Calico), que faz parte do MicroK8s
+disable_addons   = for a in metrics-server hostpath-storage:destroy-storage dns; do $(MICROK8S) disable $$a </dev/null; done
 kube_system_diag = echo "✗ O cluster não está saudável: $$d (kube-system) não ficou pronto. Diagnóstico:"; \
                    $(KUBECTL) get nodes -o wide || true; \
                    $(KUBECTL) get pods -n kube-system -o wide || true; \
@@ -241,8 +244,8 @@ ns_delete = $(KUBECTL) delete namespace $(1) --ignore-not-found --wait=false; $(
 .PHONY: help check \
 	build-dev run-dev test-dev demo-dev token-dev info-dev logs-dev stop-dev clean-dev \
 	build-stg run-stg test-stg integration-stg prepare-prd demo-stg forward-stg info-stg stop-stg clean-stg \
-	push-prd run-prd forward-prd status-prd info-prd stop-prd clean-prd \
-	kubeconfig run-infra forward-infra clean-infra \
+	build-prd push-prd run-prd forward-prd status-prd info-prd stop-prd clean-prd \
+	kubeconfig cluster-addons run-infra forward-infra stop-infra clean-infra \
 	security security-deps security-images sonar sonar-up sonar-down clean-sonar \
 	lint zip clean
 
@@ -252,8 +255,10 @@ ns_delete = $(KUBECTL) delete namespace $(1) --ignore-not-found --wait=false; $(
 
 help: ## Lista todos os comandos disponíveis
 	@echo ""
-	@echo "Fluxo:  build-dev → run-dev → test-dev   |   build-stg → run-stg → test-stg   |   run-prd"
-	@echo "        (PRD não constrói nem gera nada: usa as imagens e o certificado preparados e validados em STG)"
+	@echo "Fluxo:  build-dev → run-dev → test-dev   |   build-stg → run-stg → test-stg   |   build-prd → run-prd"
+	@echo "        (cada ambiente sobe sozinho; PRD não precisa de STG nem da observabilidade."
+	@echo "         Promoção opcional: make test-stg passa as imagens validadas em STG para PRD, sem novo build)"
+	@echo "        Build e segurança (make security) só precisam do Docker, sem nenhum ambiente em cima."
 	@echo ""
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 	awk 'BEGIN {FS = ":.*?## "}; {printf "\033[36m%-16s\033[0m %s\n", $$1, $$2}'
@@ -381,16 +386,17 @@ test-dev: $(STAMP_DEV) ## [DEV] Para o ambiente DEV e corre os testes unitários
 	@$(MAKE) --no-print-directory security
 	@echo "===== [DEV] Testes concluídos ✅  (o ambiente foi parado: make run-dev para o voltar a subir) ====="
 
-security: security-deps sonar ## [DEV] Testes de vulnerabilidades: dependências (pip-audit, Trivy) e código (SonarQube)
+security: security-deps sonar security-images ## Testes de vulnerabilidades: dependências (pip-audit, Trivy), código (SonarQube) e imagens (Trivy) — só precisa do Docker
 
-security-deps: $(STAMP_STG) ## [DEV/STG] Vulnerabilidades das dependências Python (pip-audit e Trivy) — tests/security
+security-deps: $(STAMP_STG) ## Vulnerabilidades das dependências Python (pip-audit e Trivy) — tests/security; não precisa de nenhum ambiente
 	@echo "===== [SEGURANÇA] pip-audit e Trivy — dependências (relatórios em $(SECURITY_REPORTS)) ====="
 	TRIVY_IMAGE=$(TRIVY_IMAGE) TRIVY_IMAGES= $(VENV_PY) -m pytest tests/security -v
 
-security-images: $(STAMP_STG) ## [STG] Vulnerabilidades das imagens que seguem para PRD (Trivy)
-	@echo "===== [SEGURANÇA] Trivy — imagens $(STG_TAG) (relatórios em $(SECURITY_REPORTS)) ====="
-	TRIVY_IMAGE=$(TRIVY_IMAGE) TRIVY_IMAGES="$(foreach s,$(SERVICES),$(IMAGE_REPO)/$(s):$(STG_TAG))" \
-		$(VENV_PY) -m pytest tests/security -v -k trivy_imagem
+security-images: $(STAMP_STG) ## Vulnerabilidades das imagens construídas (Trivy, tags stg e main); não precisa do cluster
+	@imgs=$$($(DOCKER) images --format '{{.Repository}}:{{.Tag}}' | grep -E '^$(IMAGE_REPO)/[^:]+:($(STG_TAG)|$(PRD_TAG))$$' | sort -u | tr '\n' ' '); \
+	if [ -z "$$imgs" ]; then echo "===== [SEGURANÇA] Trivy — imagens: nenhuma construída (make build-prd ou make build-stg), passo saltado ====="; exit 0; fi; \
+	echo "===== [SEGURANÇA] Trivy — imagens $$imgs(relatórios em $(SECURITY_REPORTS)) ====="; \
+	TRIVY_IMAGE=$(TRIVY_IMAGE) TRIVY_IMAGES="$$imgs" $(VENV_PY) -m pytest tests/security -v -k trivy_imagem
 
 sonar: sonar-up $(STAMP_STG) ## [DEV] Vulnerabilidades e qualidade do código Python (SonarQube)
 	@echo "===== [SEGURANÇA] SonarQube — análise do código Python ====="
@@ -494,13 +500,15 @@ clean-dev: ## [DEV] Limpeza Docker completa: compose down, stop, system/volume/n
 # (aplicada por run-stg; PRD não tem observabilidade)
 # ════════════════════════════════════════════════════════════════════
 
-run-infra: ## [K8S] Prepara o cluster (DNS, armazenamento) e aplica Prometheus e Grafana
-	@echo "===== [K8S] Addons do cluster (DNS e armazenamento) ====="
+cluster-addons: kubeconfig ## [K8S] Ativa os addons de que STG e PRD precisam (DNS, armazenamento, métricas para o HPA)
+	@echo "===== [K8S] Addons do cluster (DNS, armazenamento e métricas) ====="
 	@$(enable_addons)
 	@if $(KUBECTL) get namespace $(NAMESPACE_LEGACY_AUTH) >/dev/null 2>&1; then \
 		echo "===== [K8S] A remover o Keycloak de uma versão anterior do projeto (namespace $(NAMESPACE_LEGACY_AUTH)) ====="; \
 		$(call ns_delete,$(NAMESPACE_LEGACY_AUTH)); \
 	fi
+
+run-infra: cluster-addons ## [STG] Aplica a observabilidade de STG (Prometheus e Grafana); PRD não a usa
 	@$(call ns_gone,$(NAMESPACE_OBS))
 	@echo "===== [K8S] Observabilidade (namespace $(NAMESPACE_OBS)) ====="
 	@antes=$$($(prometheus_config_sum)); \
@@ -532,7 +540,12 @@ forward-infra: ## [K8S] Port-forward de Grafana e Prometheus (observabilidade de
 	$(call forward,$(NAMESPACE_OBS),prometheus,$(OBS_PROMETHEUS_PORT),9090) \
 	wait
 
-clean-infra: ## [K8S] Remove a monitorização, o Ingress controller, o RBAC de cluster e as imagens de terceiros
+stop-infra: ## [STG] Remove a observabilidade de STG (Prometheus e Grafana) para libertar memória; PRD não precisa dela
+	-@$(MAKE) --no-print-directory kubeconfig
+	-@$(call ns_delete,$(NAMESPACE_OBS))
+	@$(call kill_ports,$(OBS_PORTS))
+
+clean-infra: ## [K8S] Remove a monitorização, o Ingress controller, o RBAC de cluster, as imagens de terceiros e os addons ativados pelo projeto
 	@echo "===== [CLEAN K8S] Namespace $(NAMESPACE_OBS) (inclui PVCs) e Keycloak de versões anteriores ====="
 	-@$(MAKE) --no-print-directory kubeconfig
 	-@$(call ns_delete,$(NAMESPACE_OBS) $(NAMESPACE_LEGACY_AUTH))
@@ -545,13 +558,14 @@ clean-infra: ## [K8S] Remove a monitorização, o Ingress controller, o RBAC de 
 	-@for img in $$($(cluster_images) 2>/dev/null | grep -E '$(THIRD_PARTY_RE)' | grep -v '^sha256:'); do \
 		$(call unload_image,$$img) >/dev/null 2>&1 && echo "  removida $$img" || true; \
 	done
+	@echo "===== [CLEAN K8S] Addons ativados pelo projeto (métricas, armazenamento, DNS) ====="
+	-$(disable_addons)
 
 # ════════════════════════════════════════════════════════════════════
 # STG — MicroK8s + Helm  (ambiente onde se testa antes de promover para PRD)
 # ════════════════════════════════════════════════════════════════════
 
-build-stg: ## [STG] Constrói as imagens (com os pacotes de PRD), carrega-as no cluster e gera o certificado TLS de PRD
-	@$(cluster_up)
+build-stg: ## [STG] Constrói as imagens de STG (com os pacotes de PRD) — só Docker, não precisa do cluster
 	@if [ -n "$$($(COMPOSE) ps -q 2>/dev/null)" ]; then \
 		echo "! DEV está a correr e disputa memória com STG. Sugestão: make stop-dev (ou make clean-dev) antes de make run-stg."; \
 	fi
@@ -559,24 +573,16 @@ build-stg: ## [STG] Constrói as imagens (com os pacotes de PRD), carrega-as no 
 	@for svc in $(SERVICES); do \
 		echo "===== [STG] A construir $(IMAGE_REPO)/$$svc:$(STG_TAG) ====="; \
 		$(DOCKER) build -t $(IMAGE_REPO)/$$svc:$(STG_TAG) ./$$svc; \
-		echo "===== [STG] A carregar a imagem no cluster ($(CLUSTER)) ====="; \
-		$(call load_image,$(IMAGE_REPO)/$$svc:$(STG_TAG)); \
 	done
-	@mkdir -p $(CERT_DIR)
-	@if [ ! -f $(CERT_DIR)/tls.crt ]; then \
-		echo "===== [STG] A gerar o certificado TLS de PRD ($(PRD_HOST)) ====="; \
-		openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
-			-keyout $(CERT_DIR)/tls.key -out $(CERT_DIR)/tls.crt \
-			-subj "/CN=$(PRD_HOST)" -addext "subjectAltName=DNS:$(PRD_HOST)" 2>/dev/null; \
-		chmod 600 $(CERT_DIR)/tls.key; \
-	fi
-	$(HELM) lint ./helm -f ./helm/values-staging.yaml
-	$(HELM) lint ./helm -f ./helm/values-production.yaml
+	helm lint ./helm -f ./helm/values-staging.yaml
 	@echo "===== [STG] Build concluído ✅  (seguinte: make run-stg) ====="
 
-run-stg: kubeconfig run-infra ## [STG] Faz o deploy em Staging (Helm) e prepara o Ingress controller de PRD
-	@echo "===== [STG] Ingress controller (usado por PRD) ====="
-	$(enable_ingress)
+run-stg: run-infra ## [STG] Carrega as imagens no cluster e faz o deploy em Staging (Helm)
+	@echo "===== [STG] A carregar as imagens no cluster ($(CLUSTER)) ====="
+	@for svc in $(SERVICES); do \
+		$(DOCKER) image inspect $(IMAGE_REPO)/$$svc:$(STG_TAG) >/dev/null 2>&1 || { echo "✗ Falta a imagem $$svc:$(STG_TAG): make build-stg"; exit 1; }; \
+		$(call load_image,$(IMAGE_REPO)/$$svc:$(STG_TAG)); \
+	done
 	@echo "===== [STG] Deploy via Helm ====="
 	@$(call ns_gone,$(NAMESPACE_STG))
 	@$(call helm_unstick,$(NAMESPACE_STG))
@@ -597,10 +603,8 @@ info-stg: ## [STG] Mostra como aceder ao ambiente de Staging
 	@echo "  Grafana / Prometheus                      make forward-infra"
 	@echo ""
 
-test-stg: integration-stg ## [STG] Testes de integração, smoke e de vulnerabilidades (pip-audit, Trivy às imagens); se passarem, prepara PRD
-	@$(MAKE) --no-print-directory security-deps
-	@$(MAKE) --no-print-directory security-images
-	@echo "===== [STG] ✅ Staging validado — a preparar PRD ====="
+test-stg: integration-stg ## [STG] Testes de integração e smoke; se passarem, promove as imagens para PRD (stg → main)
+	@echo "===== [STG] ✅ Staging validado — a promover as imagens para PRD ====="
 	@$(MAKE) --no-print-directory prepare-prd
 
 integration-stg: $(STAMP_STG) ## [STG] Apenas os testes de integração e smoke contra Staging (sem preparar PRD)
@@ -617,21 +621,13 @@ integration-stg: $(STAMP_STG) ## [STG] Apenas os testes de integração e smoke 
 	ORDERS_URL=$(STG_ORDERS_URL) \
 	$(VENV_PY) -m pytest tests/integration/ tests/smoke/ -v
 
-prepare-prd: kubeconfig
+prepare-prd: ## [STG→PRD] Promove as imagens validadas em STG para PRD (docker tag stg → main, sem novo build)
 	@echo "===== [STG→PRD] Promoção das imagens validadas ($(STG_TAG) → $(PRD_TAG), sem novo build) ====="
 	@for svc in $(SERVICES); do \
 		$(DOCKER) image inspect $(IMAGE_REPO)/$$svc:$(STG_TAG) >/dev/null 2>&1 || { echo "✗ Falta a imagem $$svc:$(STG_TAG): make build-stg"; exit 1; }; \
 		$(DOCKER) tag $(IMAGE_REPO)/$$svc:$(STG_TAG) $(IMAGE_REPO)/$$svc:$(PRD_TAG); \
-		$(call load_image,$(IMAGE_REPO)/$$svc:$(PRD_TAG)); \
 	done
-	@echo "===== [STG→PRD] Certificado TLS de PRD no cluster ====="
-	@[ -f $(CERT_DIR)/tls.crt ] || { echo "✗ Falta o certificado em $(CERT_DIR): make build-stg"; exit 1; }
-	@$(call ns_gone,$(NAMESPACE_PRD))
-	@$(KUBECTL) create namespace $(NAMESPACE_PRD) --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null
-	@$(KUBECTL) create secret tls $(TLS_SECRET) -n $(NAMESPACE_PRD) \
-		--cert=$(CERT_DIR)/tls.crt --key=$(CERT_DIR)/tls.key \
-		--dry-run=client -o yaml | $(KUBECTL) apply -f -
-	@echo "===== [STG] ✅ PRD está pronto a subir: make run-prd ====="
+	@echo "===== [STG] ✅ Imagens promovidas. STG já não é necessário: make stop-stg stop-infra (liberta memória) e make run-prd ====="
 
 demo-stg: ## [STG] Cria, edita e apaga um utilizador e uma encomenda em Staging
 	@$(sudo_refresh)
@@ -664,7 +660,7 @@ stop-stg: ## [STG] Remove a release de Staging (mantém namespace, imagens e inf
 	-@$(MAKE) --no-print-directory kubeconfig
 	-$(HELM) uninstall $(RELEASE) -n $(NAMESPACE_STG) --wait
 
-clean-stg: ## [STG] Limpeza completa de STG (lógica das aulas): release, namespace, PVs órfãos, imagens e cache Docker, certificado
+clean-stg: ## [STG] Limpeza completa de STG (lógica das aulas): release, namespace, PVs órfãos, imagens e cache Docker
 	@echo "===== [CLEAN STG] Parar e remover a aplicação (Helm) ====="
 	-@$(MAKE) --no-print-directory kubeconfig
 	-$(HELM) uninstall $(RELEASE) -n $(NAMESPACE_STG) --wait
@@ -679,8 +675,7 @@ clean-stg: ## [STG] Limpeza completa de STG (lógica das aulas): release, namesp
 		$(DOCKER) image rm -f $$img >/dev/null 2>&1 && echo "  removida do Docker: $$img" || true; \
 	done
 	$(docker_prune)
-	@echo "===== [CLEAN STG] Certificado TLS de PRD (gerado em STG) e port-forwards ====="
-	rm -rf $(CERT_DIR)
+	@echo "===== [CLEAN STG] Port-forwards ====="
 	@$(call kill_ports,$(STG_PORTS))
 	$(call k8s_state,$(NAMESPACE_STG))
 
@@ -693,15 +688,42 @@ push-prd: ## [PRD] (opcional) Publica no registry as imagens promovidas por STG 
 		$(DOCKER) push $(IMAGE_REPO)/$$svc:$(PRD_TAG); \
 	done
 
-run-prd: kubeconfig ## [PRD] Sobe Produção (Helm + Ingress HTTPS) com o que STG preparou
-	@echo "===== [PRD] Pré-requisitos preparados e validados em STG ====="
-	@ok=1; \
-	for svc in $(SERVICES); do \
-		$(DOCKER) image inspect $(IMAGE_REPO)/$$svc:$(PRD_TAG) >/dev/null 2>&1 || { echo "  ✗ imagem $$svc:$(PRD_TAG) em falta"; ok=0; }; \
-	done; \
-	$(KUBECTL) get secret $(TLS_SECRET) -n $(NAMESPACE_PRD) >/dev/null 2>&1 || { echo "  ✗ certificado TLS em falta no namespace $(NAMESPACE_PRD)"; ok=0; }; \
-	if [ $$ok = 0 ]; then echo "PRD não está preparado. Executar primeiro: make build-stg run-stg test-stg"; exit 1; fi; \
-	echo "  ✓ imagens e certificado presentes"
+build-prd: ## [PRD] Constrói as imagens de PRD diretamente (sem STG) — só Docker, não precisa do cluster
+	@for svc in $(SERVICES); do \
+		echo "===== [PRD] A construir $(IMAGE_REPO)/$$svc:$(PRD_TAG) ====="; \
+		$(DOCKER) build -t $(IMAGE_REPO)/$$svc:$(PRD_TAG) ./$$svc; \
+	done
+	helm lint ./helm -f ./helm/values-production.yaml
+	@echo "===== [PRD] Build concluído ✅  (seguinte: make run-prd; opcional: make push-prd) ====="
+
+run-prd: cluster-addons ## [PRD] Sobe Produção sozinha (Ingress HTTPS + aplicação); não precisa de STG nem da observabilidade
+	@echo "===== [PRD] Imagens $(PRD_TAG) (make build-prd, ou promovidas por STG em make test-stg) ====="
+	@for svc in $(SERVICES); do \
+		$(DOCKER) image inspect $(IMAGE_REPO)/$$svc:$(PRD_TAG) >/dev/null 2>&1 || { echo "✗ Falta a imagem $$svc:$(PRD_TAG). Executar primeiro: make build-prd"; exit 1; }; \
+	done
+	@for ns in $(NAMESPACE_STG) $(NAMESPACE_OBS); do \
+		if $(KUBECTL) get pods -n $$ns --no-headers 2>/dev/null | grep -q .; then \
+			echo "! O namespace $$ns tem pods a ocupar memória e PRD não precisa deles: make stop-stg stop-infra"; \
+		fi; \
+	done
+	@echo "===== [PRD] Ingress controller ====="
+	@$(enable_ingress)
+	@echo "===== [PRD] Certificado TLS ($(PRD_HOST)) ====="
+	@mkdir -p $(CERT_DIR)
+	@if [ ! -f $(CERT_DIR)/tls.crt ]; then \
+		openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+			-keyout $(CERT_DIR)/tls.key -out $(CERT_DIR)/tls.crt \
+			-subj "/CN=$(PRD_HOST)" -addext "subjectAltName=DNS:$(PRD_HOST)" 2>/dev/null; \
+		chmod 600 $(CERT_DIR)/tls.key; \
+		echo "  gerado em $(CERT_DIR)"; \
+	fi
+	@$(call ns_gone,$(NAMESPACE_PRD))
+	@$(KUBECTL) create namespace $(NAMESPACE_PRD) --dry-run=client -o yaml | $(KUBECTL) apply -f - >/dev/null
+	@$(KUBECTL) create secret tls $(TLS_SECRET) -n $(NAMESPACE_PRD) \
+		--cert=$(CERT_DIR)/tls.crt --key=$(CERT_DIR)/tls.key \
+		--dry-run=client -o yaml | $(KUBECTL) apply -f -
+	@echo "===== [PRD] A carregar as imagens no cluster ($(CLUSTER)) ====="
+	@for svc in $(SERVICES); do $(call load_image,$(IMAGE_REPO)/$$svc:$(PRD_TAG)); done
 	@echo "===== [PRD] Start via Helm ====="
 	@$(call helm_unstick,$(NAMESPACE_PRD))
 	$(HELM) upgrade --install $(RELEASE) ./helm \
@@ -712,6 +734,9 @@ run-prd: kubeconfig ## [PRD] Sobe Produção (Helm + Ingress HTTPS) com o que ST
 		--set ingress.className=$(INGRESS_CLASS) \
 		--set ingress.controllerNamespace=$(INGRESS_NS) \
 		--wait --timeout $(HELM_TIMEOUT) || { $(call helm_diag,$(NAMESPACE_PRD)); exit 1; }
+ifeq ($(CLUSTER),kind)
+	@echo "  (kind: o Ingress só fica acessível com make forward-prd; verificação por HTTPS saltada)"
+else
 	@echo "===== [PRD] A aguardar que o Ingress encaminhe para os serviços (até 2 min) ====="
 	@# O --wait só garante pods prontos; o Ingress controller demora uns segundos a receber os endpoints (503 até lá)
 	@for i in $$(seq 1 60); do \
@@ -728,6 +753,7 @@ run-prd: kubeconfig ## [PRD] Sobe Produção (Helm + Ingress HTTPS) com o que ST
 	$(KUBECTL) get endpoints,ingress -n $(NAMESPACE_PRD) || true; \
 	$(KUBECTL) logs -n $(INGRESS_NS) -l name=nginx-ingress-microk8s --tail=30 || true; \
 	exit 1
+endif
 	@$(MAKE) --no-print-directory status-prd info-prd
 
 status-prd: ## [PRD] Estado dos workloads (health-checks do Kubernetes, HPA, Ingress)
@@ -782,6 +808,8 @@ clean-prd: ## [PRD] Limpeza completa de PRD (lógica das aulas): release, namesp
 		$(DOCKER) image rm -f $$img >/dev/null 2>&1 && echo "  removida do Docker: $$img" || true; \
 	done
 	$(docker_prune)
+	@echo "===== [CLEAN PRD] Certificado TLS gerado por run-prd ====="
+	rm -rf $(CERT_DIR)
 	@echo "===== [CLEAN PRD] Entrada $(PRD_HOST) no /etc/hosts e port-forwards ====="
 	-@if grep -qE '[[:space:]]$(PRD_HOST)([[:space:]]|$$)' /etc/hosts; then \
 		sudo sed -i.bak -E '/[[:space:]]$(PRD_HOST)([[:space:]]|$$)/d' /etc/hosts && sudo rm -f /etc/hosts.bak && echo "  removida"; \
@@ -821,7 +849,9 @@ clean: clean-prd clean-stg clean-infra clean-dev clean-sonar ## Limpa TUDO: PRD,
 	@echo "  Cluster: releases Helm, namespaces $(NAMESPACE_PRD)/$(NAMESPACE_STG)/$(NAMESPACE_OBS),"
 	@echo "           PVCs, Secrets, Ingress e Ingress controller, ClusterRole/Binding,"
 	@echo "           imagens do projeto e de terceiros, restantes recursos de todos os namespaces"
-	@echo "           (kubectl delete all --all --all-namespaces, exceto kube-system) e imagens sem uso (ctr images prune --all)."
+	@echo "           (kubectl delete all --all --all-namespaces, exceto kube-system), imagens sem uso (ctr images prune --all)"
+	@echo "           e addons ativados pelo projeto (dns, hostpath-storage, metrics-server, ingress)."
+	@echo "           No kube-system fica só a rede do cluster (Calico), que faz parte do próprio MicroK8s."
 	@echo "  Docker:  todos os contentores parados; imagens, volumes, redes e cache de build removidos"
 	@echo "           (docker system prune -af --volumes, volume/network/builder prune)."
 	@echo "  Local:   $(VENV_DIR), $(CERT_DIR), ficheiros kubeconfig-*.yaml, caches, *.db, port-forwards e a entrada no /etc/hosts."

@@ -21,7 +21,8 @@ spec:
   maxReplicas: {{ $autoscaling.maxReplicas }}
   behavior:
     scaleUp:
-      stabilizationWindowSeconds: 0
+      # Ignora o pico de CPU do arranque: só escala se a carga se mantiver durante 2 minutos
+      stabilizationWindowSeconds: 120
       policies:
         - type: Percent
           value: 100
@@ -39,11 +40,6 @@ spec:
         target:
           type: Utilization
           averageUtilization: {{ $autoscaling.targetCPUUtilizationPercentage }}
-    - type: Resource
-      resource:
-        name: memory
-        target:
-          type: Utilization
-          averageUtilization: {{ $autoscaling.targetMemoryUtilizationPercentage }}
+    # Só CPU: a memória de um serviço Python não desce ao acrescentar réplicas
 {{- end }}
 {{- end }}

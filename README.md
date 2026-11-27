@@ -40,8 +40,8 @@ A plataforma destina-se a organizações que necessitam de registar os seus clie
 | Ambiente | Plataforma | Finalidade |
 |---|---|---|
 | **DEV** | Docker Compose | Desenvolvimento, testes unitários e testes de vulnerabilidades do código |
-| **STG** | Kubernetes (MicroK8s), *namespace* `staging` | Validação: testes de integração, *smoke* e de vulnerabilidades do código. Tudo o que PRD utiliza (imagens e certificado) é construído e gerado aqui, e apenas o que é aprovado segue para produção |
-| **PRD** | Kubernetes (MicroK8s), *namespace* `production` | Exploração, em HTTPS. Nada é construído nem gerado neste ambiente e não se executam testes: apenas se sobe o que STG preparou e validou |
+| **STG** | Kubernetes (MicroK8s), *namespace* `staging` | Validação: testes de integração e *smoke*, com monitorização (Prometheus e Grafana). As imagens aprovadas podem ser promovidas para PRD sem novo *build* |
+| **PRD** | Kubernetes (MicroK8s), *namespace* `production` | Exploração, em HTTPS. Sobe sozinho: só a aplicação e o Ingress, sem STG nem monitorização no cluster |
 
 ---
 
@@ -97,7 +97,7 @@ make check
 
 | Recurso | Mínimo | Observações |
 |---|---|---|
-| Memória | 8 GB | DEV e STG não correm em simultâneo: `make build-stg` começa por limpar DEV. Os testes (`make test-dev`) param primeiro o ambiente, porque não precisam dele |
+| Memória | 8 GB (PRD sozinho cabe em 4 GB) | Cada ambiente sobe sozinho e nenhum precisa de outro em cima. Os *builds* e os testes de segurança só precisam do Docker. `make test-dev` para primeiro DEV, porque os testes não precisam dele |
 | CPU | 4 núcleos | Com 2 núcleos funciona, mais devagar |
 | Disco livre | 30 GB | Imagens Docker, imagens do cluster e volumes |
 | Arquitetura | x86_64 ou arm64 | As imagens usadas existem para as duas arquiteturas. Funciona em VM (por exemplo VirtualBox ou Parallels com Ubuntu 24.04) ou em PC físico; não é preciso *nested virtualization*. `make check` mostra a arquitetura e o tipo de virtualização |
@@ -145,7 +145,7 @@ sudo usermod -aG microk8s $USER
 
 Iniciar nova sessão (ou `newgrp microk8s`) para o grupo ficar ativo.
 
-Os *addons* `dns`, `hostpath-storage` e `metrics-server` são ativados automaticamente por `make run-stg`, caso ainda não o estejam.
+Os *addons* `dns`, `hostpath-storage` e `metrics-server` são ativados automaticamente por `make run-stg` e `make run-prd`, caso ainda não o estejam, e o `ingress` por `make run-prd`. `make clean` volta a desativá-los.
 
 Em sistemas sem MicroK8s (macOS ou Windows), a solução executa igualmente num cluster [kind](https://kind.sigs.k8s.io/), criado com `kind create cluster --name dev`. O `Makefile` deteta automaticamente o cluster disponível e os comandos são os mesmos; a única diferença reside no acesso a PRD (secção 4.3).
 
@@ -163,13 +163,15 @@ cd projeto-final-devops
 
 ## 4. Instalação e execução
 
-Todas as operações são realizadas através do `make`. Cada ambiente segue a mesma sequência:
+Todas as operações são realizadas através do `make`. Cada ambiente segue a mesma sequência e sobe sozinho, sem precisar de outro ambiente em cima:
 
 ```text
 DEV:  make build-dev → make run-dev → make test-dev
 STG:  make build-stg → make run-stg → make test-stg
-PRD:  make run-prd
+PRD:  make build-prd → make run-prd
 ```
+
+Os *builds* (`build-*`) e os testes de segurança (`make security`: pip-audit, Trivy e SonarQube) só usam o Docker: não precisam do cluster nem de nenhum ambiente a correr. Para levar para PRD exatamente as imagens validadas em STG, `make test-stg` promove-as (`stg` → `main`, sem novo *build*) e substitui o `make build-prd`; antes de `make run-prd`, `make stop-stg stop-infra` liberta a memória de STG.
 
 A lista completa de comandos é apresentada por `make help`.
 
@@ -187,14 +189,15 @@ Após o arranque, o site de gestão fica disponível em <http://localhost:8000>.
 
 ### 4.2 STG
 
-STG é o ambiente onde tudo é construído, gerado e validado. Só o que é aprovado aqui segue para PRD.
+STG é o ambiente de validação. As imagens aprovadas aqui podem seguir para PRD sem novo *build*.
 
 | Passo | Comando | Resultado |
 |---|---|---|
-| 1. Construção | `make build-stg` | Constrói as imagens com todas as dependências de produção instaladas, carrega-as no cluster, gera o certificado TLS de PRD e instala no `.venv` os módulos de teste. Não limpa nem para nada: se DEV estiver a correr, sugere `make stop-dev` ou `make clean-dev`, para os dois ambientes não disputarem a memória da máquina |
-| 2. Arranque | `make run-stg` | Prepara o cluster (DNS e armazenamento), instala as ferramentas de monitorização de STG, o Ingress controller e a aplicação |
-| 3. Validação | `make test-stg` | Executa os testes de integração e *smoke* contra o cluster e os testes de vulnerabilidades às dependências e às imagens que seguem para PRD (pip-audit e Trivy). Se forem aprovados, prepara PRD: promove as imagens (`stg` → `main`, sem novo *build*) e instala o certificado TLS no cluster. `make integration-stg` executa apenas os testes de integração e *smoke*, sem preparar PRD |
-| 4. Demonstração (opcional) | `make demo-stg` | Cria, edita e apaga um cliente e uma encomenda |
+| 1. Construção | `make build-stg` | Constrói as imagens com as dependências de produção (só Docker, sem cluster) e instala no `.venv` os módulos de teste. Se DEV estiver a correr, sugere `make stop-dev`, para os dois ambientes não disputarem a memória |
+| 2. Arranque | `make run-stg` | Prepara o cluster (DNS, armazenamento e métricas), instala a monitorização de STG, carrega as imagens no cluster e instala a aplicação |
+| 3. Validação | `make test-stg` | Executa os testes de integração e *smoke* contra o cluster. Se forem aprovados, promove as imagens para PRD (`stg` → `main`, sem novo *build*). `make integration-stg` executa apenas os testes |
+| 4. Paragem | `make stop-stg stop-infra` | Remove a aplicação e a monitorização de STG, para libertar memória antes de PRD |
+| 5. Demonstração (opcional) | `make demo-stg` | Cria, edita e apaga um cliente e uma encomenda |
 
 STG não é exposto para o exterior do cluster. O acesso faz-se por *port-forward*, mantendo em execução num terminal:
 
@@ -206,13 +209,14 @@ O site de gestão fica então disponível em <http://localhost:8100>.
 
 ### 4.3 PRD
 
-Em produção nada é construído nem gerado e não se executam testes: apenas se sobe o ambiente com as imagens e o certificado preparados e validados em STG. O arranque é rápido e executa exatamente o que foi testado. PRD não tem observabilidade: o rastreio distribuído (OpenTelemetry) existe apenas em DEV, e as métricas (Prometheus e Grafana) apenas em DEV e STG.
+PRD sobe sozinho: no cluster ficam apenas a aplicação (`production`), o Ingress controller (`ingress`) e os componentes do MicroK8s (`kube-system`). Os *namespaces* `staging` e `observability` não são necessários; se existirem, `make run-prd` avisa e indica `make stop-stg stop-infra`. PRD não tem observabilidade: o rastreio distribuído (OpenTelemetry) existe apenas em DEV, e as métricas (Prometheus e Grafana) apenas em DEV e STG.
 
 | Passo | Comando | Resultado |
 |---|---|---|
-| 1. Arranque | `make run-prd` | Confirma que STG preparou PRD (imagens e certificado) e sobe a aplicação com o ponto de entrada HTTPS. Se faltar algum pré-requisito, termina com erro e indica os passos de STG a executar |
-| 2. Verificação | `make status-prd` | Apresenta as réplicas, os *health-checks*, o escalonamento automático e o Ingress |
-| 3. Publicação (opcional) | `make push-prd` | Publica no registo (GHCR) as imagens promovidas por STG |
+| 1. Construção | `make build-prd` | Constrói as imagens de produção (só Docker, sem cluster). Dispensável se as imagens vierem de STG (`make test-stg`) |
+| 2. Publicação (opcional) | `make push-prd` | Publica as imagens no registo (GHCR), para outra máquina as descarregar |
+| 3. Arranque | `make run-prd` | Prepara o cluster (DNS, armazenamento, métricas e Ingress), gera o certificado TLS, carrega as imagens e sobe a aplicação com o ponto de entrada HTTPS |
+| 4. Verificação | `make status-prd` | Apresenta as réplicas, os *health-checks*, o escalonamento automático e o Ingress |
 
 O site responde no endereço `projeto-final.test`, que deve ser associado à máquina do cluster (uma única vez):
 
@@ -224,7 +228,18 @@ O site de gestão fica disponível em <https://projeto-final.test/>. Os pedidos 
 
 Em cluster kind, o ponto de entrada não ocupa a porta 443 da máquina: é necessário manter em execução `make forward-prd` e utilizar <https://projeto-final.test:8443/>.
 
-A disponibilidade em produção é assegurada pelos *health-checks* do Kubernetes (*readiness* e *liveness*), pelo número mínimo de réplicas e pelo escalonamento automático.
+A disponibilidade em produção é assegurada pelos *health-checks* do Kubernetes (*readiness* e *liveness*) e pelo escalonamento automático.
+
+**Réplicas em PRD.** Sem carga, corre **1 pod de cada**: `web`, `service-users`, `service-orders` e `postgres-orders`, como no HLD (`×1`). As duas APIs têm escalonamento automático (HPA) até 3 réplicas (`×1–3` no HLD): só sobem quando o CPU médio passa 70 % do pedido durante 2 minutos, e voltam a 1 cinco minutos depois de a carga acabar. O site e a base de dados têm sempre 1 réplica.
+
+```text
+production   postgres-orders-…   1/1   Running
+production   service-orders-…    1/1   Running
+production   service-users-…     1/1   Running
+production   web-…               1/1   Running
+```
+
+Numa versão anterior podia aparecer uma 2.ª réplica do `service-orders` sem carga. No arranque, o serviço chega a usar mais de 80 % do CPU pedido, e o HPA escalava de imediato. Agora o HPA só escala se a carga durar 2 minutos, pelo que ignora o arranque. Passou também a usar só o CPU, porque a memória de um serviço Python não desce ao acrescentar réplicas. `make status-prd` mostra as réplicas e o estado do HPA.
 
 ---
 
@@ -324,14 +339,14 @@ sum(rate(http_requests_total[5m])) by (service)
 |---|---|
 | `make stop-dev`, `make stop-stg`, `make stop-prd` | Para o ambiente, preservando os dados e as imagens |
 | `make clean-dev` | Limpeza Docker completa: `docker compose down -v --rmi all --remove-orphans`, paragem de todos os contentores, `docker system prune -af --volumes`, `volume prune`, `network prune` e `builder prune`; remove ainda o `.venv` e os ficheiros temporários e apresenta `docker system df`. **Elimina os dados** |
-| `make clean-stg` | Remove a aplicação e o *namespace* `staging`, todas as imagens do projeto (no cluster e no Docker) e o certificado gerado em STG. **Elimina os dados** |
-| `make clean-prd` | Remove a aplicação, o *namespace* `production` (com o Secret TLS) e a entrada `projeto-final.test` do `/etc/hosts`. **Elimina os dados** |
-| `make clean-infra` | Remove a monitorização de STG, o Ingress controller, o RBAC de cluster do Prometheus e as imagens de terceiros carregadas no cluster |
+| `make clean-stg` | Remove a aplicação e o *namespace* `staging`, todas as imagens do projeto (no cluster e no Docker). **Elimina os dados** |
+| `make clean-prd` | Remove a aplicação, o *namespace* `production` (com o Secret TLS), o certificado gerado em `.certs` e a entrada `projeto-final.test` do `/etc/hosts`. **Elimina os dados** |
+| `make clean-infra` | Remove a monitorização de STG, o Ingress controller, o RBAC de cluster do Prometheus, as imagens de terceiros carregadas no cluster e desativa os *addons* que o projeto ativou (`metrics-server`, `hostpath-storage`, `dns`) |
 | `make sonar-down` | Para o SonarQube, preservando as análises |
 | `make clean-sonar` | Remove o SonarQube: contentor, volumes (análises) e imagem |
-| `make clean` | Executa todas as limpezas anteriores, apaga os recursos que restem em todos os *namespaces* (`kubectl delete all --all --all-namespaces`, exceto `kube-system`, onde estão a rede, o DNS e o armazenamento do cluster) e as imagens do cluster sem uso (`microk8s ctr images prune --all`), e remove os ficheiros de acesso ao cluster (`kubeconfig-*.yaml`) e os *port-forwards* ativos |
+| `make clean` | Executa todas as limpezas anteriores, apaga os recursos que restem em todos os *namespaces* (`kubectl delete all --all --all-namespaces`, exceto `kube-system`) e as imagens do cluster sem uso (`microk8s ctr images prune --all`), e remove os ficheiros de acesso ao cluster (`kubeconfig-*.yaml`) e os *port-forwards* ativos |
 
-Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na máquina; permanece apenas o MicroK8s instalado. **Atenção:** `make clean-dev` (incluído em `make clean`) para e remove todos os contentores, imagens e volumes Docker da máquina, e não apenas os deste projeto. Em cluster kind, o nó do cluster é preservado. A remoção da entrada do `/etc/hosts` pede a palavra-passe de administrador.
+Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na máquina; permanece apenas o MicroK8s instalado. No `kube-system` ficam só o `calico-node` e o `calico-kube-controllers` (a rede do cluster, que vem com o MicroK8s e não é um *addon*) e o serviço `kubernetes` (a API do cluster). Não devem ser apagados: sem eles o MicroK8s deixa de ter rede e não os volta a criar sozinho. O DNS, o armazenamento, as métricas e o Ingress são desativados pelo `make clean` e voltam a ser ativados pelo `make run-stg` ou `make run-prd` seguinte. **Atenção:** `make clean-dev` (incluído em `make clean`) para e remove todos os contentores, imagens e volumes Docker da máquina, e não apenas os deste projeto. Em cluster kind, o nó do cluster é preservado. A remoção da entrada do `/etc/hosts` pede a palavra-passe de administrador.
 
 **Entrega:** `make zip` gera `ProjetoFinal.zip` a partir do Git (`git archive`), com a pasta `ProjetoFinal/` na raiz e sem ficheiros locais (`.venv`, certificados, relatórios, pastas do computador). Exige que as alterações estejam em *commit*.
 
@@ -342,14 +357,14 @@ Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na m
 | Mensagem | Causa | Resolução |
 |---|---|---|
 | `Não foi possível obter o kubeconfig do cluster` | O MicroK8s não está instalado ou não arrancou | Os comandos `make` arrancam automaticamente o MicroK8s quando está parado e apresentam o erro devolvido. Se não estiver instalado: `sudo snap install microk8s --classic` |
-| `PRD não está preparado` ao executar `make run-prd` | Os passos de STG não foram executados | `make build-stg`, `make run-stg` e `make test-stg` |
+| `Falta a imagem ...:main` ao executar `make run-prd` | As imagens de PRD ainda não foram construídas | `make build-prd` (ou, a partir de STG, `make test-stg`) |
 | `kubernetes cluster unreachable` ao utilizar o `helm` diretamente | O Helm não tem indicação do cluster a utilizar | Executar `make kubeconfig` e acrescentar `--kubeconfig kubeconfig-make.yaml` ao comando. Os comandos `make` fazem-no automaticamente |
 | `UPGRADE FAILED: "projeto-final" has no deployed releases` | Uma instalação anterior foi interrompida | Os comandos `make run-stg` e `make run-prd` e o pipeline removem automaticamente a instalação incompleta |
 | `Credenciais do SonarQube recusadas` | A palavra-passe do SonarQube foi alterada manualmente no painel | `make security SONAR_PASSWORD=<palavra-passe atual>`, ou `make clean-sonar` para recriar o servidor |
 | `Connection refused` nos primeiros testes de `make test-stg` | A porta local do *port-forward* abria antes de o túnel até ao *pod* responder | Corrigido: antes do primeiro teste, `tests/conftest.py` espera (até 120 s) que o site e as APIs respondam por HTTP, e os endereços usam `127.0.0.1`. Se o tempo esgotar, a mensagem indica o serviço em falta: confirmar os *pods* com `kubectl get pods -n staging` |
 | `permission denied ... docker.sock` | O utilizador não pertence ao grupo `docker` | `sudo usermod -aG docker $USER` e iniciar nova sessão (secção 3.3) |
 | `ensurepip is not available` ao criar o `.venv` | Falta o módulo `venv` do Python | `sudo apt install python3-venv` |
-| A máquina fica sem memória | DEV, SonarQube e cluster ao mesmo tempo | `make test-dev` para o ambiente antes dos testes e para o SonarQube no fim; `make build-stg` limpa DEV antes de STG. Recomendam-se 8 GB |
+| A máquina fica sem memória | Vários ambientes ao mesmo tempo (DEV, STG, monitorização, SonarQube) | Nenhum ambiente precisa de outro em cima: `make stop-dev` antes de STG, `make stop-stg stop-infra` antes de PRD; `make test-dev` para DEV antes dos testes e para o SonarQube no fim. Recomendam-se 8 GB |
 | `forbidden: unable to create new content in namespace ... because it is being terminated` | Uma limpeza anterior deixou o *namespace* a meio da remoção (por exemplo, sem rede no cluster, os *pods* e os volumes não terminam) | Resolvido automaticamente: antes de instalar, `make run-stg` e `make run-prd` esperam que o *namespace* desapareça e, se ficar preso, forçam a saída dos *pods* e dos volumes |
 | `[sudo] password for ...` durante `make run-stg` | Ao ativar um *addon* (DNS, armazenamento), o próprio MicroK8s pede a password de administrador | Só acontece na primeira vez: os *addons* já ativos são saltados |
 | `plugin type="calico" failed (add): ... connection is unauthorized: Unauthorized` e *pods* presos em `ContainerCreating` | O *token* que a rede do cluster (Calico) usa expirou: MicroK8s instalado há muito tempo, VM restaurada de um *snapshot* ou relógio desacertado | Resolvido automaticamente: `make run-stg` deteta o erro, reinicia o `calico-node` (que gera um *token* novo) e continua. À mão: `microk8s kubectl rollout restart daemonset/calico-node -n kube-system` |
@@ -373,7 +388,7 @@ Após `make clean` não subsiste qualquer recurso do projeto no cluster nem na m
 
 Cada serviço dispõe de `requirements-prd.txt` e `requirements-tracing.txt` (instalados pelo respetivo `Dockerfile`) e de `requirements-dev.txt`. As imagens usam como base o Alpine (`python:3.12-alpine3.24`), sem vulnerabilidades conhecidas, e o `pip` é removido depois de instalar as dependências. O ambiente virtual é criado com `python -m venv .venv` pelos comandos `build-dev` e `build-stg`.
 
-A imagem é construída uma única vez, em `build-stg`, com as dependências de produção. Os módulos de teste permanecem no `.venv`, fora da imagem. `test-stg`, se os testes forem aprovados, promove a mesma imagem (`stg` → `main`) e `run-prd` limita-se a iniciá-la.
+As imagens são construídas com as dependências de produção, em `build-stg` ou `build-prd`, só com o Docker. Os módulos de teste permanecem no `.venv`, fora da imagem. `test-stg`, se os testes forem aprovados, promove a mesma imagem (`stg` → `main`) para PRD; `run-prd` carrega-a no cluster e inicia-a.
 
 ### 10.2 Testes
 
@@ -390,10 +405,10 @@ Os testes de vulnerabilidades não precisam do ambiente a correr: analisam o có
 
 | Comando | Ferramentas | Incluído em |
 |---|---|---|
-| `make security-deps` | pip-audit e Trivy às dependências Python (`tests/security`) | `make security`, `make test-stg` |
-| `make security-images` | Trivy às imagens `stg`, as mesmas que seguem para PRD | `make test-stg` |
+| `make security-deps` | pip-audit e Trivy às dependências Python (`tests/security`) | `make security` |
+| `make security-images` | Trivy às imagens construídas (`stg` e `main`); salta se ainda não houver imagens | `make security` |
 | `make sonar` | SonarQube ao código Python | `make security` |
-| `make security` | `security-deps` e `sonar` | `make test-dev` e pipeline |
+| `make security` | `security-deps`, `sonar` e `security-images`. Só precisa do Docker: não é preciso nenhum ambiente nem o cluster em cima | `make test-dev` e pipeline |
 
 Os relatórios de cada execução ficam em `tests/security/reports/`. Os resultados atuais e as vulnerabilidades corrigidas estão documentados em [`tests/security/RESULTADOS.md`](tests/security/RESULTADOS.md): 0 vulnerabilidades nas dependências e nas imagens, e 0 *issues* no SonarQube.
 
