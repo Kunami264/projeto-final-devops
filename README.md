@@ -215,7 +215,7 @@ PRD sobe sozinho: no cluster ficam apenas a aplicação (`production`), o Ingres
 |---|---|---|
 | 1. Construção | `make build-prd` | Constrói as imagens de produção (só Docker, sem cluster). Dispensável se as imagens vierem de STG (`make test-stg`) |
 | 2. Publicação (opcional) | `make push-prd` | Publica as imagens no registo (GHCR), para outra máquina as descarregar |
-| 3. Arranque | `make run-prd` | Prepara o cluster (DNS, armazenamento, métricas e Ingress), gera o certificado TLS, carrega as imagens e sobe a aplicação com o ponto de entrada HTTPS |
+| 3. Arranque | `make run-prd` | Prepara o cluster (DNS, armazenamento, métricas e Ingress), gera o certificado TLS, carrega as imagens (as locais ou, se não existirem na máquina, as descarregadas do GHCR com `docker pull`) e sobe a aplicação com o ponto de entrada HTTPS |
 | 4. Verificação | `make status-prd` | Apresenta as réplicas, os *health-checks*, o escalonamento automático e o Ingress |
 
 O site responde no endereço `projeto-final.test`, que deve ser associado à máquina do cluster (uma única vez):

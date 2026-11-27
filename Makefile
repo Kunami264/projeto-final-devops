@@ -406,7 +406,7 @@ security-deps: $(STAMP_STG) ## Vulnerabilidades das dependências Python (pip-au
 	TRIVY_IMAGE=$(TRIVY_IMAGE) TRIVY_IMAGES= $(VENV_PY) -m pytest tests/security -v
 
 security-images: $(STAMP_STG) ## Vulnerabilidades das imagens construídas (Trivy, tags stg e main); não precisa do cluster
-	@imgs=$$($(DOCKER) images --format '{{.Repository}}:{{.Tag}}' | grep -E '^$(IMAGE_REPO)/[^:]+:($(STG_TAG)|$(PRD_TAG))$$' | sort -u | tr '\n' ' '); \
+	@imgs=$$($(DOCKER) images --format '{{.Repository}}:{{.Tag}}' | { grep -E '^$(IMAGE_REPO)/[^:]+:($(STG_TAG)|$(PRD_TAG))$$' || true; } | sort -u | tr '\n' ' '); \
 	if [ -z "$$imgs" ]; then echo "===== [SEGURANÇA] Trivy — imagens: nenhuma construída (make build-prd ou make build-stg), passo saltado ====="; exit 0; fi; \
 	echo "===== [SEGURANÇA] Trivy — imagens $$imgs(relatórios em $(SECURITY_REPORTS)) ====="; \
 	TRIVY_IMAGE=$(TRIVY_IMAGE) TRIVY_IMAGES="$$imgs" $(VENV_PY) -m pytest tests/security -v -k trivy_imagem
@@ -710,9 +710,13 @@ build-prd: ## [PRD] Constrói as imagens de PRD diretamente (sem STG) — só Do
 	@echo "===== [PRD] Build concluído ✅  (seguinte: make run-prd; opcional: make push-prd) ====="
 
 run-prd: cluster-addons ## [PRD] Sobe Produção sozinha (Ingress HTTPS + aplicação); não precisa de STG nem da observabilidade
-	@echo "===== [PRD] Imagens $(PRD_TAG) (make build-prd, ou promovidas por STG em make test-stg) ====="
+	@echo "===== [PRD] Imagens $(PRD_TAG) (locais: make build-prd ou make test-stg; senão, pull do registry) ====="
 	@for svc in $(SERVICES); do \
-		$(DOCKER) image inspect $(IMAGE_REPO)/$$svc:$(PRD_TAG) >/dev/null 2>&1 || { echo "✗ Falta a imagem $$svc:$(PRD_TAG). Executar primeiro: make build-prd"; exit 1; }; \
+		img=$(IMAGE_REPO)/$$svc:$(PRD_TAG); \
+		if $(DOCKER) image inspect $$img >/dev/null 2>&1; then echo "  ✓ $$img (local)"; \
+		else echo "  $$img não existe localmente: a fazer pull do registry"; \
+			$(DOCKER) pull $$img || { echo "✗ Não foi possível obter $$img. Construir com make build-prd, ou publicar antes com make push-prd (docker login ghcr.io)"; exit 1; }; \
+		fi; \
 	done
 	@for ns in $(NAMESPACE_STG) $(NAMESPACE_OBS); do \
 		if $(KUBECTL) get pods -n $$ns --no-headers 2>/dev/null | grep -q .; then \
