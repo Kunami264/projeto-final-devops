@@ -105,7 +105,8 @@ enable_addons    = $(KUBECTL) get daemonset/calico-node -n kube-system >/dev/nul
                    fi; \
                    for a in dns hostpath-storage metrics-server; do \
                      if $(MICROK8S) status -a $$a 2>/dev/null | grep -qx enabled; then echo "  ✓ addon $$a já ativo"; \
-                     else echo "  a ativar o addon $$a (o MicroK8s pode pedir a password de sudo)"; $(MICROK8S) enable $$a; fi; \
+                     else echo "  a ativar o addon $$a (o MicroK8s pode pedir a password de sudo)"; \
+                       $(MICROK8S) enable $$a || { echo "  ! enable $$a falhou (o API server pode estar a reiniciar): nova tentativa em 15 s"; sleep 15; $(MICROK8S) enable $$a; }; fi; \
                    done; \
                    for d in coredns hostpath-provisioner; do $(wait_kube_system); done
 sudo_refresh     = case "$(KUBECTL)" in sudo*) sudo -v ;; esac

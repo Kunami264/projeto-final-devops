@@ -127,7 +127,7 @@ O Trivy não precisa de ser instalado: corre num contentor (`aquasec/trivy`). O 
 | Permissão | Para quê | Como obter |
 |---|---|---|
 | Acesso ao Docker sem `sudo` | Todos os comandos `make` usam `docker` diretamente | `sudo usermod -aG docker $USER` e iniciar nova sessão (ou `newgrp docker`) |
-| Acesso ao MicroK8s sem `sudo` | Os comandos `make` de *build* e *run* usam `microk8s` diretamente e nunca pedem a palavra-passe | `sudo usermod -aG microk8s $USER` e iniciar nova sessão (ou `newgrp microk8s`) |
+| Acesso ao MicroK8s sem `sudo` | Os comandos `make` de *build* e *run* usam `microk8s` diretamente. Só pedem a palavra-passe de `sudo` ao ativar ou desativar os *addons* do cluster (primeiro `run-stg`/`run-prd` e depois de `make clean`). No *runner* do CI, ver a secção 10.3 | `sudo usermod -aG microk8s $USER` e iniciar nova sessão (ou `newgrp microk8s`) |
 | `sudo` (só na preparação da máquina) | Instalar os programas, adicionar o utilizador aos grupos e escrever a entrada `projeto-final.test` no `/etc/hosts` | Utilizador no grupo `sudo`. Feito à mão, uma única vez; `make clean-prd` também o usa para remover a entrada do `/etc/hosts` |
 | Portas livres | Acesso aos serviços | DEV: 8000–8002, 3000, 9090, 16686, 4317 e 9500 (SonarQube). STG: 8100–8102. Ferramentas do cluster: 3100 e 9190. PRD: 80 e 443 |
 
@@ -425,6 +425,32 @@ O pipeline (`.github/workflows/pipeline.yml`, GitHub Actions) acompanha a promo�
 | `main` | Testes de vulnerabilidades → promoção da imagem de STG no registo, sem nova construção → aprovação manual → verificação dos pré-requisitos preparados em STG → *deploy* em PRD com HTTPS → verificação dos *health-checks* |
 
 A análise, a construção e os testes decorrem na infraestrutura do GitHub. Os *deploys* são executados por um *runner self-hosted*, instalado na máquina que aloja o Docker e o MicroK8s. As imagens são publicadas no GitHub Container Registry. A limpeza dos ambientes é desencadeada manualmente (`.github/workflows/cleanup.yml`).
+
+#### Configuração do *runner self-hosted* (uma única vez, por máquina)
+
+O *runner* corre sem terminal e não pode escrever a palavra-passe de `sudo`. Depois de um `make clean`, os *jobs* de STG e PRD voltam a ativar a rede do cluster (Calico) e os *addons* DNS, armazenamento e métricas (`make cluster-addons`). O `microk8s enable` destes *addons* precisa de `sudo`. Sem as regras seguintes, o passo "Repor a rede e os addons do cluster" falha logo com `sudo: a password is required`, e o Prometheus e o Grafana ficam `Pending` por falta de armazenamento.
+
+1. Instalar o *runner* ([instruções do GitHub](https://docs.github.com/en/actions/hosting-your-own-runners/managing-self-hosted-runners/adding-self-hosted-runners)) com o mesmo utilizador que pertence aos grupos `docker` e `microk8s` (secção 3.3).
+2. Permitir que esse utilizador use o `microk8s` e arranque ou pare o *snap* sem palavra-passe (substituir `<utilizador>` pelo nome do utilizador):
+
+   ```bash
+   printf '%s\n' \
+     '<utilizador> ALL=(root) NOPASSWD: /snap/bin/microk8s' \
+     '<utilizador> ALL=(root) NOPASSWD: /usr/bin/snap start microk8s, /usr/bin/snap stop microk8s' \
+     > /tmp/microk8s-runner
+   sudo visudo -cf /tmp/microk8s-runner
+   sudo install -m 0440 -o root -g root /tmp/microk8s-runner /etc/sudoers.d/microk8s-runner
+   ```
+
+   Confirmar com `sudo -n /snap/bin/microk8s status`, que não pode pedir palavra-passe. A regra só abrange os comandos do MicroK8s. O utilizador já administra o cluster através do grupo `microk8s`.
+3. Criar no repositório (*Settings → Environments*) os *environments* `dev`, `staging`, `production` (com aprovação manual) e `production-postdeploy`, com estes *secrets*:
+
+   | *Environment* | *Secrets* | Para quê |
+   |---|---|---|
+   | `staging` | `GHCR_PULL_TOKEN_STG`, `AUTH_JWT_SECRET_STG`, `AUTH_ADMIN_PASSWORD_STG`, `GRAFANA_ADMIN_PASSWORD_STG` | Descarregar as imagens do GHCR (*token* com `read:packages`), autenticação da aplicação e palavra-passe do Grafana |
+   | `production` | `GHCR_PULL_TOKEN_PRD`, `AUTH_JWT_SECRET_PRD`, `AUTH_ADMIN_PASSWORD_PRD` | Iguais aos de STG, para PRD |
+
+   A variável `PRD_HOST` é opcional (por omissão `projeto-final.test`). As imagens são publicadas em `ghcr.io/kunami264/projeto-final-devops`. Num *fork*, o dono `kunami264` tem de ser substituído em `helm/values.yaml`, `helm/values-production.yaml`, no `--docker-username` do `pipeline.yml` e, para os comandos `make`, em `IMAGE_REPO` (`make run-prd IMAGE_REPO=ghcr.io/<dono>/projeto-final-devops`).
 
 ### 10.4 API
 

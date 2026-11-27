@@ -348,6 +348,10 @@ jobs:
           microk8s config > kubeconfig-stg.yaml
           echo "KUBECONFIG=$PWD/kubeconfig-stg.yaml" >> "$GITHUB_ENV"
 
+      # Depois de um make clean o cluster fica sem rede (Calico), DNS e armazenamento: os PVCs ficavam Pending
+      - name: Repor a rede e os addons do cluster (Calico, DNS, armazenamento, métricas)
+        run: make cluster-addons MICROK8S="sudo -n /snap/bin/microk8s" KUBECTL="microk8s kubectl"
+
       - name: Remover o Keycloak de versões anteriores (namespace auth)
         run: kubectl delete namespace auth --ignore-not-found --wait=true --timeout=300s
 
@@ -467,8 +471,8 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          shred -u kubeconfig-stg.yaml secret-values.yaml 2>/dev/null || \
-            rm -f kubeconfig-stg.yaml secret-values.yaml
+          shred -u kubeconfig-stg.yaml kubeconfig-make.yaml secret-values.yaml 2>/dev/null || \
+            rm -f kubeconfig-stg.yaml kubeconfig-make.yaml secret-values.yaml
   promote:
     name: Promover imagem STG → PRD (${{ matrix.service }})
     needs: [prep, security-source, security-images]
@@ -542,6 +546,9 @@ jobs:
           microk8s config > kubeconfig-prd.yaml
           echo "KUBECONFIG=$PWD/kubeconfig-prd.yaml" >> "$GITHUB_ENV"
 
+      - name: Repor a rede e os addons do cluster (Calico, DNS, armazenamento, métricas)
+        run: make cluster-addons MICROK8S="sudo -n /snap/bin/microk8s" KUBECTL="microk8s kubectl"
+
       - name: Remover o Keycloak de versões anteriores (namespace auth)
         run: kubectl delete namespace auth --ignore-not-found --wait=true --timeout=300s
 
@@ -592,5 +599,5 @@ jobs:
         if: always()
         run: |
           set -euo pipefail
-          shred -u kubeconfig-prd.yaml secret-values.yaml 2>/dev/null || \
-            rm -f kubeconfig-prd.yaml secret-values.yaml
+          shred -u kubeconfig-prd.yaml kubeconfig-make.yaml secret-values.yaml 2>/dev/null || \
+            rm -f kubeconfig-prd.yaml kubeconfig-make.yaml secret-values.yaml

@@ -34,7 +34,7 @@ jobs:
           echo "KUBECONFIG=$PWD/kubeconfig-clean.yaml" >> "$GITHUB_ENV"
 
       - name: Limpar todos os ambientes
-        run: make clean MICROK8S=microk8s
+        run: make clean MICROK8S="sudo -n /snap/bin/microk8s" KUBECTL="microk8s kubectl"
 
       - name: Parar o MicroK8s
         if: inputs.parar_microk8s
